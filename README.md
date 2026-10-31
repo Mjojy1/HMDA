@@ -202,3 +202,67 @@ Use the recorded Git SHA and input hashes to identify the evaluated version.
 A dirty working tree means the commit alone does not capture local source edits.
 
 Run the focused tests with `python -m pytest -q tests/test_evaluate_model.py`.
+
+## Domino MLflow: retrospective model comparison
+
+Run from the repository root in the existing Domino Workspace or a Domino Job:
+
+```bash
+python experiments/log_model_comparison.py
+```
+
+The script creates the explicitly named experiment **HMDA Mortgage Approval -
+Model Comparison** with **Logistic Regression - Baseline** and **Gradient Boosting
+- Preferred**. It records retrospective evaluations of existing saved pipelines,
+not training runs. No autologging, model registration, model binary upload, App
+changes, or Dataset writes occur. It uses the same Python/backend environment as
+the evaluation Job plus MLflow (3.3.2 verified here); no additional installation
+is needed in the current environment.
+
+Tracking must use Domino's injected `MLFLOW_TRACKING_URI` pointing to its local
+managed tracking proxy, `http://127.0.0.1:8768` (or `localhost:8768`), with
+`DOMINO_PROJECT_ID` present. The script validates service access before creating
+runs. It rejects unset, file-based, or other unverified tracking URIs and never
+falls back to `mlruns`. If another Domino environment uses a different managed
+endpoint, verify that endpoint with the administrator before adapting the explicit
+allowlist. Import/service failures exit nonzero; they are not reported as success.
+
+Both models are reevaluated against the same existing 25,000-row
+`/mnt/data/HMDA_Project/hmda_2025.parquet`, using shared backend preprocessing and
+the saved target (actions 1 + 2 positive, action 3 denied). The preferred model's
+validation reuses `jobs/evaluate_model.evaluate()` without writing its Job
+outputs. Baseline threshold is 0.5; preferred threshold is 0.89. All four metrics
+must match their respective saved JSON results with absolute tolerance `1e-10`
+and zero relative tolerance **before either run is logged**. Threshold-dependent
+metrics compare the saved operating points, not a common threshold or new tuning.
+
+Runs contain feature order, model type and saved estimator parameters, evaluation
+year, record count, Git SHA/dirty-tree flag, model and Dataset SHA-256, software
+versions, and Domino context. Small artifacts include saved metrics, verified
+evaluation evidence, and confusion matrices (rows/columns `[denied, positive]`).
+The existing preferred evaluation JSON is attached when available through the
+backend's Dataset-first/report-directory fallback. No raw records are uploaded.
+Git metadata describes the logging execution; a dirty tree means its commit does
+not fully describe the local source.
+
+**Repeat runs:** a stable evaluation ID hashes model/data contents, threshold,
+feature definitions, year, saved metrics, and evaluation protocol version.
+Unchanged inputs reuse the same finished runs after validating their server-side
+metrics, parameters and artifacts. Failed/incomplete runs are retried with the
+same run ID. Changed inputs create new runs. Original logging Git/software
+metadata is retained when a finished run is reused. Run only one comparison Job
+at a time: MLflow has no atomic uniqueness constraint for tags, so concurrent
+first executions are not supported. Multiple matching identities cause a clear
+failure for review rather than silently selecting a run. An existing experiment
+with the same name but a different project tag is rejected.
+
+In **HMDA_Project → Experiments**, open **HMDA Mortgage Approval - Model
+Comparison**, select both labeled runs, and compare ROC-AUC, accuracy, balanced
+accuracy and denial recall. Check their retrospective tags and artifacts. A
+successful command prints `VERIFIED`, the experiment ID and both run IDs only
+after both runs are `FINISHED` and their metrics, parameters and JSON artifacts
+have been read back from the tracking server. A partial logging failure exits
+nonzero; rerunning repairs/reuses the existing identity without starting over.
+
+Tests: `python -m pytest -q tests/test_model_comparison.py` (uses an in-memory
+tracking double; real tracking verification is performed by the command above).
