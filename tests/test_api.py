@@ -18,3 +18,14 @@ def test_analytics(fixture_service):
     assert c.get('/api/overview?race=absent').json()['records']==0
     assert c.get('/api/fairness?min_samples=-1').status_code==422
     assert c.get('/api/overview?year=bad').status_code==422
+
+def test_lineage_counts_missing_categorical(fixture_service):
+    c=TestClient(create_app(fixture_service))
+    quality={x['field']:x for x in c.get('/api/lineage').json()['quality']}
+    assert quality['loan_term']['missing_or_nonnumeric']==5
+    assert quality['loan_term']['exempt']==0
+
+def test_docs_use_relative_openapi_url(fixture_service):
+    c=TestClient(create_app(fixture_service))
+    assert "url: './openapi.json'" in c.get('/api/docs').text
+    assert c.get('/api/openapi.json').status_code==200

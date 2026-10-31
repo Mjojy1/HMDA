@@ -12,7 +12,7 @@ def main():
     operations={'data':lambda: svc.summary(svc.data)}
     if not args.data_only:
         operations.update(metrics=lambda:svc.metrics,importance=lambda:svc.importance,fairness=lambda:svc.fairness,
-                          evaluation=lambda:svc.json_file(svc.report_path('gradient_boosting_evaluation_2025.json')))
+                          evaluation=lambda:svc.evaluation)
         for name in ['mortgage_gradient_boosting.joblib','mortgage_approval_model.joblib']:
             checks[name]='ready' if (svc.data_dir/'models'/name).is_file() else 'missing'
     for name, operation in operations.items():

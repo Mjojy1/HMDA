@@ -80,3 +80,36 @@ def test_missing_columns(fixture_service):
     p=fixture_service.data_dir/'hmda_2021.parquet'
     pd.read_parquet(p).drop(columns='income').to_parquet(p)
     with pytest.raises(DataUnavailable,match='missing columns'):fixture_service.data
+
+@pytest.mark.parametrize('change', ['unknown_group', 'duplicate_group', 'wrong_counts', 'missing_recall'])
+def test_fairness_rejects_inconsistent_groups(fixture_service, change):
+    p=fixture_service.report_dir;p.mkdir()
+    rows=[dict(race='A',applications=1,actual_denials=0,historical_approval_rate=1,predicted_approval_rate=1,denial_recall=None),dict(race='Missing',applications=1,actual_denials=0,historical_approval_rate=1,predicted_approval_rate=1,denial_recall=None),dict(race='B',applications=1,actual_denials=1,historical_approval_rate=0,predicted_approval_rate=0,denial_recall=1)]
+    if change=='unknown_group': rows[0]['race']='Unknown label'
+    if change=='duplicate_group': rows[0]['race']='B'
+    if change=='wrong_counts': rows[0]['applications']=2;rows[1]['applications']=0
+    if change=='missing_recall': rows[2]['denial_recall']=None
+    pd.DataFrame(rows).to_csv(p/'gradient_boosting_fairness_audit_2025.csv',index=False)
+    with pytest.raises(DataUnavailable,match='Fairness report'):fixture_service.fairness
+
+def test_invalid_evaluation_rejected(fixture_service):
+    fixture_service.report_dir.mkdir()
+    (fixture_service.report_dir/'gradient_boosting_evaluation_2025.json').write_text('{}')
+    fixture_service.__dict__['metrics']=[{},dict(test_year=2025,threshold=.89,test_metrics={})]
+    with pytest.raises(DataUnavailable,match='Evaluation report'):fixture_service.evaluation
+
+@pytest.mark.parametrize('corruption', ['none','threshold','matrix','hash'])
+def test_evaluation_provenance_and_matrix(fixture_service, corruption):
+    import hashlib
+    svc=fixture_service
+    model_dir=svc.data_dir/'models';model_dir.mkdir()
+    model_path=model_dir/'mortgage_gradient_boosting.joblib';model_path.write_bytes(b'test-only hash fixture; never unpickled')
+    svc.__dict__['metrics']=[{},dict(test_year=2025,threshold=.5,test_metrics=dict(roc_auc=1.,accuracy=1.,balanced_accuracy=1.,denial_recall=1.))]
+    report=dict(confusion_matrix=[[1,0],[0,2]],threshold=.5,test_metrics=svc.metrics[1]['test_metrics'],model_sha256=hashlib.sha256(model_path.read_bytes()).hexdigest(),data_sha256=hashlib.sha256((svc.data_dir/'hmda_2025.parquet').read_bytes()).hexdigest())
+    if corruption=='threshold':report['threshold']=.9
+    if corruption=='matrix':report['confusion_matrix']=[[0,1],[0,2]]
+    if corruption=='hash':report['model_sha256']='stale'
+    svc.report_dir.mkdir();(svc.report_dir/'gradient_boosting_evaluation_2025.json').write_text(json.dumps(report))
+    if corruption=='none':assert svc.evaluation['confusion_matrix']==[[1,0],[0,2]]
+    else:
+        with pytest.raises(DataUnavailable,match='invalid or stale'):svc.evaluation

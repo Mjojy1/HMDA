@@ -4,12 +4,25 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
 base=os.getenv('HMDA_TEST_URL','http://127.0.0.1:8000/')
-output=Path('outputs/screenshots');output.mkdir(parents=True,exist_ok=True)
+output=Path(os.getenv('HMDA_SCREENSHOT_DIR','outputs/screenshots'));output.mkdir(parents=True,exist_ok=True)
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True,args=['--no-sandbox'])
     page=browser.new_page(viewport={'width':1440,'height':1000},device_scale_factor=1,reduced_motion='reduce')
     titles={'overview':'Executive overview','lending':'Lending analytics','model':'Model intelligence','fairness':'Fair-lending monitoring','lineage':'Data lineage & governance'}
     errors=[]
+    failed_responses=[]
+    if os.getenv('HMDA_TEST_DOMINO_AUTH')=='1':
+        import requests
+        response=requests.get('http://localhost:8899/access-token',timeout=10)
+        response.raise_for_status()
+        try: token=response.json()
+        except ValueError: token=response.text
+        if isinstance(token,dict):token=token.get('access_token',token.get('token'))
+        def authenticate(route):
+            route.continue_(headers={**route.request.headers,'Authorization':'Bearer '+token.strip()})
+        page.route(base+'**',authenticate)
+    page.on('console',lambda msg: errors.append(msg.text) if msg.type=='error' else None)
+    page.on('response',lambda response: failed_responses.append((response.url,response.status)) if response.status>=400 else None)
     page.on('pageerror',lambda e: errors.append(str(e)))
     for route in ['overview','lending','model','fairness','lineage']:
         page.goto(base+'#'+route)
@@ -38,19 +51,21 @@ with sync_playwright() as p:
     page.get_by_role('button',name='Open navigation').click()
     page.get_by_role('link',name='Executive overview',exact=True).click()
     expect(page.locator('h1')).to_have_text('Executive overview')
-    # Simulate a prefix-stripping reverse proxy while keeping the browser URL prefixed.
-    prefix=base+'preview/demo/'
-    requests=[]
-    def proxy(route):
-        target=route.request.url.replace(prefix,base,1)
-        requests.append(route.request.url)
-        response=route.fetch(url=target)
-        route.fulfill(response=response)
-    page.route(prefix+'**',proxy)
-    page.goto(prefix+'#overview');page.wait_for_load_state('networkidle')
-    expect(page.locator('main')).to_contain_text('125,000')
-    assert any('/preview/demo/api/overview' in u for u in requests)
-    assert any('/preview/demo/assets/' in u for u in requests)
+    if os.getenv('HMDA_TEST_DOMINO_AUTH')!='1':
+        # Simulate a prefix-stripping reverse proxy while keeping the browser URL prefixed.
+        prefix=base+'preview/demo/'
+        requests=[]
+        def proxy(route):
+            target=route.request.url.replace(prefix,base,1)
+            requests.append(route.request.url)
+            response=route.fetch(url=target)
+            route.fulfill(response=response)
+        page.route(prefix+'**',proxy)
+        page.goto(prefix+'#overview');page.wait_for_load_state('networkidle')
+        expect(page.locator('main')).to_contain_text('125,000')
+        assert any('/preview/demo/api/overview' in u for u in requests)
+        assert any('/preview/demo/assets/' in u for u in requests)
+    assert not failed_responses,failed_responses
     assert not errors,errors
     browser.close()
 print('All five pages, filters and mobile navigation passed; no JavaScript errors.')

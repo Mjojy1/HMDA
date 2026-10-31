@@ -5,13 +5,14 @@ from pathlib import Path
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import ROOT, FEATURES, TARGET_NOTE
 from backend.data_service import DataService, DataUnavailable
 
 
 def create_app(service=None):
-    app = FastAPI(title='HMDA Mortgage Intelligence', docs_url='/api/docs')
+    app = FastAPI(title='HMDA Mortgage Intelligence', docs_url=None, redoc_url=None, openapi_url='/api/openapi.json')
     svc = service or DataService()
     origins = os.getenv('HMDA_CORS_ORIGINS','').split(',')
     if origins != ['']:
@@ -21,13 +22,17 @@ def create_app(service=None):
     async def unavailable(request: Request, exc: DataUnavailable):
         return JSONResponse(status_code=503,content={'error': {'code':'artifact_unavailable','message':str(exc)}})
 
+    @app.get('/api/docs', include_in_schema=False)
+    def docs():
+        return get_swagger_ui_html(openapi_url='./openapi.json', title=app.title)
+
     @app.get('/api/health')
     def health(): return {'status':'alive'}
 
     @app.get('/api/ready')
     def ready():
         checks = {}
-        for name, check in [('data',lambda: len(svc.data)),('metrics',lambda: svc.metrics),('importance',lambda: svc.importance),('fairness',lambda: svc.fairness),('evaluation',lambda: svc.json_file(svc.report_path('gradient_boosting_evaluation_2025.json')))]:
+        for name, check in [('data',lambda: len(svc.data)),('metrics',lambda: svc.metrics),('importance',lambda: svc.importance),('fairness',lambda: svc.fairness),('evaluation',lambda: svc.evaluation)]:
             try:
                 value = check()
                 if name == 'data' and not value: raise DataUnavailable('Dataset contains no rows.')
@@ -56,7 +61,7 @@ def create_app(service=None):
     def metrics(): return {'models':svc.metrics,'target_note':TARGET_NOTE, 'always_positive_accuracy':svc.summary(svc.data[svc.data.year.eq(2025)])['positive_rate']}
 
     @app.get('/api/evaluation')
-    def evaluation(): return svc.json_file(svc.report_path('gradient_boosting_evaluation_2025.json'))
+    def evaluation(): return svc.evaluation
 
     @app.get('/api/importance')
     def importance(): return svc.importance
@@ -69,7 +74,8 @@ def create_app(service=None):
         rows = [dict(r,historical_origination_rate=origin.get(r['race'])) for r in svc.fairness if r['applications'] >= min_samples]
         rates = [r['historical_origination_rate'] for r in rows if r['race'] not in ['Missing','Race Not Available','Free Form Text Only'] and r['applications'] >= 100]
         return {'rows':rows,'excluded_groups':len(svc.fairness)-len(rows), 'origination_gap':max(rates)-min(rates) if len(rates)>1 else None,
-                'source':str(svc.report_path('gradient_boosting_fairness_audit_2025.csv')), 'target_note':TARGET_NOTE}
+                'source':str(svc.report_path('gradient_boosting_fairness_audit_2025.csv')), 'target_note':TARGET_NOTE,
+                'model':svc.metrics[1]}
 
     @app.get('/api/lineage')
     def lineage():
@@ -82,7 +88,9 @@ def create_app(service=None):
         return {'source':'Public HMDA; filtered historical samples, not nationally representative', 'dataset_path':str(svc.data_dir), 'git_sha':sha,
                 'python':platform.python_version(), 'compute_environment':os.getenv('DOMINO_COMPUTE_ENVIRONMENT_ID','Not provided by runtime'),
                 'target_note':TARGET_NOTE,'features':FEATURES,'artifacts':artifacts,
-                'quality':[{'field':c,'missing_or_nonnumeric':int(d[c].isna().sum())} for c in FEATURES],
+                'years':sorted(d.year.unique().tolist()),
+                'quality':[{'field':c,'missing_or_nonnumeric':int((d[c].isna() | d[c].eq('Missing')).sum()),
+                            'exempt':int(d[c].eq('Exempt').sum())} for c in FEATURES],
                 'missing_race':int(d.derived_race.isin(['Missing','Race Not Available','Free Form Text Only']).sum()),
                 'action_counts':{str(k):int(v) for k,v in d.action_taken.value_counts().items()}}
 

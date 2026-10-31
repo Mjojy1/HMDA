@@ -1,5 +1,6 @@
 """Read-only, process-cached analytics. Never unpickle models in the web server."""
 import json
+import hashlib
 from functools import cached_property
 from pathlib import Path
 import numpy as np
@@ -139,13 +140,59 @@ class DataService:
         cols = ['race','applications','actual_denials','historical_approval_rate','predicted_approval_rate','denial_recall']
         d = self.report('gradient_boosting_fairness_audit_2025.csv', cols)
         try:
+            if d.race.isna().any() or d.race.duplicated().any():
+                raise ValueError('missing or duplicate groups')
             for c in cols[1:]:
                 d[c] = pd.to_numeric(d[c], errors='raise')
-            for c in cols[3:]:
-                if not d[c].dropna().between(0,1).all(): raise ValueError(c)
-            if not (d.applications.ge(d.actual_denials) & d.actual_denials.ge(0)).all(): raise ValueError('counts')
-            if d.applications.sum() != len(self.data[self.data.year.eq(2025)]): raise ValueError('sample size')
-        except ValueError as exc:
+            for c in ['applications', 'actual_denials']:
+                if not np.isfinite(d[c]).all() or not d[c].eq(d[c].round()).all():
+                    raise ValueError('noninteger counts')
+            if not (d.applications.gt(0) & d.applications.ge(d.actual_denials) & d.actual_denials.ge(0)).all():
+                raise ValueError('counts')
+            for c in cols[3:5]:
+                if d[c].isna().any() or not d[c].between(0, 1).all(): raise ValueError(c)
+            if not d.denial_recall.dropna().between(0, 1).all(): raise ValueError('recall range')
+            if not d.denial_recall.isna().eq(d.actual_denials.eq(0)).all():
+                raise ValueError('undefined recall must correspond to zero denials')
+            test = self.data[self.data.year.eq(2025)]
+            groups = test.groupby('derived_race').approved.agg(['size', 'sum'])
+            if set(d.race) != set(groups.index): raise ValueError('group labels')
+            for row in d.itertuples():
+                group = groups.loc[row.race]
+                if row.applications != group['size'] or row.actual_denials != group['size'] - group['sum']:
+                    raise ValueError('group counts')
+                if not np.isclose(row.historical_approval_rate, group['sum'] / group['size'], atol=1e-10, rtol=0):
+                    raise ValueError('historical group rate')
+        except (ValueError, TypeError) as exc:
             raise DataUnavailable('Fairness report values do not match the 2025 sample.') from exc
         d['small_group'] = (d.applications < 100) | (d.actual_denials < 30)
         return records(d.sort_values('applications', ascending=False))
+
+    @cached_property
+    def evaluation(self):
+        report = self.json_file(self.report_path('gradient_boosting_evaluation_2025.json'))
+        try:
+            model = self.metrics[1]
+            matrix = np.asarray(report['confusion_matrix'], dtype=float)
+            test = self.data[self.data.year.eq(model['test_year'])]
+            if matrix.shape != (2, 2) or not np.isfinite(matrix).all() or (matrix < 0).any() or not (matrix == matrix.round()).all():
+                raise ValueError('matrix')
+            if not np.array_equal(matrix.sum(axis=1), [test.approved.eq(0).sum(), test.approved.eq(1).sum()]):
+                raise ValueError('matrix denominators')
+            if report['threshold'] != model['threshold']: raise ValueError('threshold')
+            for key, value in model['test_metrics'].items():
+                if not np.isclose(report['test_metrics'][key], value, atol=1e-10, rtol=0):
+                    raise ValueError('saved metric mismatch')
+            derived = {'accuracy': np.trace(matrix) / matrix.sum(),
+                       'denial_recall': matrix[0, 0] / matrix[0].sum(),
+                       'balanced_accuracy': (matrix[0, 0] / matrix[0].sum() + matrix[1, 1] / matrix[1].sum()) / 2}
+            for key, value in derived.items():
+                if not np.isclose(value, model['test_metrics'][key], atol=1e-10, rtol=0):
+                    raise ValueError('matrix metrics mismatch')
+            for key, name in [('model_sha256', 'models/mortgage_gradient_boosting.joblib'),
+                              ('data_sha256', f"hmda_{model['test_year']}.parquet")]:
+                if report[key] != hashlib.sha256((self.data_dir / name).read_bytes()).hexdigest():
+                    raise ValueError('stale input hash')
+        except (KeyError, ValueError, TypeError, OSError) as exc:
+            raise DataUnavailable('Evaluation report is invalid or stale. Validate against the saved model and test Dataset.') from exc
+        return report
