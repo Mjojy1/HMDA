@@ -31,18 +31,26 @@ def inputs(tmp_path, monkeypatch):
     d.to_parquet(tmp_path / 'hmda_2025.parquet')
     monkeypatch.setattr(job.joblib, 'load', lambda _: SavedPipeline())
     monkeypatch.setattr(job, 'REPORT_DIR', tmp_path / 'no-reports')
+    monkeypatch.setenv('HMDA_JOB_ARTIFACT_DIR', str(tmp_path / 'artifacts'))
     return tmp_path
 
 
-def test_success_and_unique_reports(inputs):
+def test_success_and_unique_reports(inputs, capsys):
     for _ in range(2):
         assert job.run(inputs) == 0
     files = list((inputs / 'reports/job_runs').glob('*.json'))
-    assert len(files) == 2
+    artifacts = list((inputs / 'artifacts').glob('*.json'))
+    assert len(files) == len(artifacts) == 2
+    assert {path.name for path in files} == {path.name for path in artifacts}
+    for path in files:
+        assert path.read_bytes() == (inputs / 'artifacts' / path.name).read_bytes()
     report = json.loads(files[0].read_text())
     assert report['status'] == 'succeeded'
     assert report['confusion_matrix'] == [[1, 0], [1, 2]]
     assert all(x['passed'] for x in report['comparisons']['saved_metrics'].values())
+    logs = capsys.readouterr().out
+    assert 'Dataset report:' in logs
+    assert 'Job artifact:' in logs
 
 
 @pytest.mark.parametrize('corruption', ['metric', 'threshold', 'target', 'year', 'missing_reference'])
@@ -86,6 +94,19 @@ def test_unwritable_destination_fails(inputs):
     destination.write_text('preserve')
     assert job.run(inputs, output_dir=destination) == 1
     assert destination.read_text() == 'preserve'
+
+
+def test_artifact_export_failure_fails_clearly(inputs, monkeypatch, capsys):
+    destination = inputs / 'not-an-artifact-directory'
+    destination.write_text('preserve')
+    monkeypatch.setenv('HMDA_JOB_ARTIFACT_DIR', str(destination))
+    assert job.run(inputs) == 1
+    report = json.loads(next((inputs / 'reports/job_runs').glob('*.json')).read_text())
+    assert report['status'] == 'failed' and report['exit_code'] == 1
+    assert 'Artifact export failed' in report['error']
+    logs = capsys.readouterr()
+    assert 'FAILED: Cannot export Job artifact' in logs.err
+    assert 'SUCCEEDED' not in logs.out
 
 
 def test_metric_tolerance():

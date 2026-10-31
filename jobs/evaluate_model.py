@@ -110,8 +110,9 @@ def evaluate(report, data_dir=DATASET, evaluation_report=None):
         raise ValueError('Evaluation mismatch: ' + ', '.join(failed))
 
 
-def run(data_dir=DATASET, output_dir=None, evaluation_report=None):
+def run(data_dir=DATASET, output_dir=None, evaluation_report=None, artifact_dir=None):
     output_dir = output_dir or data_dir / 'reports/job_runs'
+    artifact_dir = artifact_dir or Path(os.getenv('HMDA_JOB_ARTIFACT_DIR', '/mnt/artifacts'))
     report = {'status': 'running', 'started_at': now(), 'git': provenance(),
               'domino_run_id': os.getenv('DOMINO_RUN_ID'), 'absolute_tolerance': ATOL,
               'relative_tolerance': 0, 'versions': {'python': platform.python_version(),
@@ -136,6 +137,23 @@ def run(data_dir=DATASET, output_dir=None, evaluation_report=None):
         if report.get('error'):
             print(report['error'], file=sys.stderr)
         return 1
+    artifact_path = artifact_dir / name
+    try:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        with artifact_path.open('xb') as handle:
+            handle.write(path.read_bytes())
+    except Exception as exc:
+        error = f'Artifact export failed: {type(exc).__name__}: {exc}'
+        report.update(status='failed', error=error, exit_code=1)
+        try:
+            with path.open('w') as handle:
+                json.dump(report, handle, indent=2, allow_nan=False)
+        except Exception as report_exc:
+            print(f'FAILED: Cannot update Dataset report after artifact export failure: {report_exc}', file=sys.stderr)
+        print(f'FAILED: Cannot export Job artifact to {artifact_path}: {exc}', file=sys.stderr)
+        print(f'Dataset report: {path}', file=sys.stderr)
+        print(error, file=sys.stderr)
+        return 1
     print(f"HMDA 2025 evaluation: {report['status'].upper()}")
     for key, value in report.get('metrics', {}).items():
         print(f'  {key}: {value:.10f}')
@@ -143,7 +161,8 @@ def run(data_dir=DATASET, output_dir=None, evaluation_report=None):
         print(f"  Confusion matrix [denied, positive]: {report['confusion_matrix']}")
     if report.get('error'):
         print(report['error'], file=sys.stderr)
-    print(f'Report: {path}')
+    print(f'Dataset report: {path}')
+    print(f'Job artifact: {artifact_path}')
     return code
 
 
