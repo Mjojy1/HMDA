@@ -1,2 +1,147 @@
-# HMDA
-HMDA mortgage project combining datasets 
+# HMDA Mortgage Intelligence
+
+Historical Lending Analytics, Model Intelligence & Fair-Lending Monitoring.
+
+A React + TypeScript + Tailwind/Recharts dashboard served by one FastAPI process. It reads the existing Domino Dataset without modifying it. This is historical research and monitoring, **not underwriting**. No individual decision endpoint is provided.
+
+## Critical finding: actual target differs from the initial brief
+
+Inspection of the notebook and all five Parquet files found action codes **1, 2 and 3**, not only 1 and 3. The existing `approved` label is 1 for **originated (1) OR approved but not accepted (2)**, and 0 for denied (3). The application preserves the trained pipeline and saved metrics, labels the historical target explicitly, and calculates **origination separately from action 1**. Restricting the model to actions 1 and 3 would change the evaluation; that has not been done.
+
+2025: 25,000 records; 22,123 originated, 698 approved but not accepted, 2,179 denied. Saved-positive prevalence is 91.284%, while origination is 88.492%. An always-positive model therefore exceeds the preferred model's raw accuracy. Balanced accuracy weights both classes equally and ROC-AUC measures ranking across thresholds. Scores have not been evaluated for calibration.
+
+## Inspection and artifact sources
+
+Original repository: `README.md`, `HMDA Mortgage Calc.ipynb`, notebook checkpoint, and Git metadata. The notebook is preserved unchanged.
+
+Dataset: `/mnt/data/HMDA_Project/hmda_2021.parquet` through `hmda_2025.parquet`, each 25,000 rows and 28 columns. Original models and reports:
+
+- `models/mortgage_gradient_boosting.joblib` — present; preferred one-hot HistGradientBoosting pipeline, version 2.0.
+- `models/gradient_boosting_metrics.json` — present.
+- `models/mortgage_approval_model.joblib`, `models/model_metrics.json` — present; baseline.
+- `reports/gradient_boosting_permutation_importance.csv` — present; validation ROC-AUC decrease, 5 repeats.
+- `reports/gradient_boosting_fairness_audit_2025.csv` — **missing in the original Dataset**.
+- Original baseline reports (`fairness_audit_2025.csv`, `permutation_importance.csv`, coefficients, approval rates) exist but are never substituted for preferred-model reports.
+
+The missing preferred-model fairness report and confusion matrix were generated without training, using the saved pipeline and notebook preprocessing. They live in ignored `outputs/reports/`. All four reevaluated test metrics matched saved values to tolerance 1e-10. Evaluation JSON records model and test-data SHA-256 hashes. Dataset reports take precedence; generated reports are used only when the named Dataset report is absent. The lineage page exposes the source paths.
+
+**Generated files are not in Git.** Recreate them in every new runtime or attach a durable report directory and set `HMDA_REPORT_DIR`. The server never loads joblib or runs predictions. Offline report generation must use trusted model files.
+
+## Setup and local development
+
+Use Python 3.12 and the pinned backend dependencies. Original workspace had Python 3.12.15, FastAPI, pandas, PyArrow, sklearn and joblib; Node/npm and pytest were missing. A project-local `.venv` was created with system packages inherited. Node 24.19.0/npm 11.17.0 were installed through `nodejs-wheel` for this workspace. Neither the venv nor Node is versioned.
+
+```bash
+cd /mnt/code
+python -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+pip install -r tests/requirements.txt
+# If Node is absent (or provision Node 22+ in the Compute Environment):
+pip install nodejs-wheel==24.19.0
+npm ci --prefix frontend
+python -m scripts.build_reports
+python -m scripts.validate_artifacts
+npm run build --prefix frontend
+PORT=8000 ./app.sh
+```
+
+Open the workspace's forwarded port 8000 for the built app. VS Code may already occupy 8888 in a Workspace. App containers use 8888 by default; match the port configured for the App. There was no port override in the inspected workspace environment.
+
+For hot reload, run these in separate terminals:
+
+```bash
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+npm run dev --prefix frontend
+```
+
+Vite listens on 5173 and proxies `api/` to port 8000. Production uses one process and one port. Assets use `base: './'`; API URLs resolve `api/` against `document.baseURI`. Hash navigation preserves Domino's proxy prefix. Use a trailing slash on the App root URL.
+
+## Tests and API
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
+npm run build --prefix frontend
+python -m scripts.validate_artifacts
+curl -f http://127.0.0.1:8000/api/health
+curl -f http://127.0.0.1:8000/api/ready
+curl -f http://127.0.0.1:8000/api/overview
+```
+
+Tests use temporary synthetic fixtures solely for validation, never as dashboard data. They never write production Dataset artifacts. Sandbox networking/event-loop restrictions can prevent TestClient from running; run tests in the ordinary workspace terminal in that case.
+
+Endpoints: `health` (liveness), `ready` (data/report readiness), `overview`, `trends`, `distributions`, `metrics`, `evaluation`, `importance`, `fairness`, `lineage`, `filters`, all under `api/`. Interactive API documentation: `api/docs`. Analytics filters: `year`, `loan_type`, `race`; fairness: `min_samples`. Model evaluation always uses the fixed 2025 cohort. Unknown filter combinations return empty data, not invented values. Missing artifacts return 503 with an actionable error. Readiness returns degraded until all analytical artifacts are available.
+
+Data loads once per process; artifact reads are cached where appropriate. Restart after replacing input files. Histograms retain negative and extreme values in open-ended bins and explicitly count excluded nonnumeric values. Income is in thousands of dollars; loan amounts are dollars. Missing categorical values remain a category. Full categorical distributions are scrollable; categories are not silently truncated.
+
+## Domino Compute Environment and App deployment
+
+**No App has been published or deployed by this implementation.** Workspace mount access is verified; App-runtime mount access must be verified separately.
+
+1. In `HMDA_Project`, launch a VS Code Workspace from the Git branch containing these files. Changes must be committed and pushed **only after owner approval** before a Git-based App can reliably publish them.
+2. Select/build a Compute Environment with Python 3.12, pinned `backend/requirements.txt`, and Node 22+ (24.19 tested). Install build dependencies in the environment or allow `npm ci` at startup. The current workspace's `.venv` does not transfer to an App. A possible environment customization is `RUN pip install nodejs-wheel==24.19.0` plus the backend packages; ensure the environment's Python matches `HMDA_PYTHON`.
+3. Attach the existing `HMDA_Project` Dataset to the App, read-only. Confirm its actual mount; set `HMDA_DATA_DIR` if different from `/mnt/data/HMDA_Project`.
+4. Generate reports with the Job command below into a **new writable durable output location**, attach that location to the App, and set `HMDA_REPORT_DIR` accordingly. Alternatively run the documented generation command in the App preparation environment. Do not assume workspace `outputs/` appears in a new container.
+5. In the project's Apps UI, create/configure the App with launch command `./app.sh`, appropriate Compute Environment, hardware, Dataset attachments, and port **8888** (or set `PORT` to the configured port). Keep access restricted for preview.
+6. Start **App Preview**. Check logs, open all five pages, and visit the preview URL plus `api/ready`. Require HTTP 200 and all checks ready. This validates mount access **from the App process**, not just the Workspace.
+7. Publish a named App version tied to the approved Git commit and environment. Record the Dataset snapshot/report provenance. Deploy that published version through the Apps UI after approval; recheck `api/ready` and browser requests under the deployed proxy prefix.
+
+`app.sh` starts from its own repository directory, validates data, checks Python imports, builds from the lockfile when `frontend/dist` is absent, and runs Uvicorn on `0.0.0.0`. Set `HMDA_BUILD_FRONTEND=1` to force a rebuild; otherwise an existing tested bundle is reused. Missing optional reports leave individual pages degraded; missing/corrupt data prevents startup. No automatic package installation or report generation occurs in Python request handlers.
+
+Configuration: `HMDA_DATA_DIR`, `HMDA_REPORT_DIR`, `HMDA_PYTHON`, `HMDA_BUILD_FRONTEND`, `PORT`, optional comma-separated `HMDA_CORS_ORIGINS` for explicit local origins. CORS is disabled by default because production is same-origin. No credentials are read or emitted by the API. Artifact paths and Git SHA are displayed intentionally; other environment variables are not exposed.
+
+## Domino Jobs and reproducibility
+
+Prepared commands (not submitted):
+
+```bash
+# Read-only validation Job
+python -m scripts.validate_artifacts
+
+# Offline evaluation + missing report generation, existing model only
+# Use a new directory for each run; never overwrites existing reports.
+python -m scripts.build_reports --output /mnt/artifacts/hmda-reports/run-001
+```
+
+For a Job, select the approved code commit, matching Compute Environment, and attached Dataset. Set `HMDA_REPORT_DIR` to the generated run directory when validating or consuming outputs. Ensure Job artifacts are persisted and accessible to the App; `/mnt/artifacts` is not implicitly shared between runs. Save the Job ID with the commit, environment version, Dataset snapshot and generated hashes. Model evaluation and report generation share one command to enforce metric verification before writing reports. No data downloads, model fitting, threshold tuning or artifact overwrites occur. Missing models require separate approval to retrain.
+
+MLflow logging is intentionally not enabled: this environment already reports incompatible MLflow/cryptography dependencies, and report files plus hashes provide reproducible evidence without modifying experiment state. Tracking can be added after an environment-compatible MLflow setup is agreed.
+
+## Interpretation and limits
+
+The notebook's sampling filters include purchase, first lien, principal residence, site-built, 1–4 units and actions 1–3. These samples are not necessarily nationally representative. Equal annual sample sizes are not application-volume estimates. The notebook explores multiple model variants/test thresholds, so the 2025 results should not be marketed as an independently locked final validation. Use a new untouched cohort for that claim.
+
+Group comparisons are unadjusted descriptive statistics, not discrimination findings or causal estimates. Small groups and small denial denominators are flagged; null recall means no actual denials. Missing/unavailable demographic categories are retained and excluded from the named-group rate range. No uncertainty intervals or covariate controls are implemented. The range is a percentage-point spread, not a significance test.
+
+## Files
+
+- `backend/`: read-only services, schemas, API, pinned dependencies.
+- `frontend/`: five-page responsive React dashboard and lockfile.
+- `scripts/`: artifact validation and deterministic offline evaluation/report generation.
+- `tests/`: temporary-fixture API and service tests.
+- `app.sh`: single-process Domino entry point.
+- `outputs/`: ignored generated reports and local verification artifacts.
+- `HMDA Mortgage Calc.ipynb`: original, unchanged.
+
+## Browser verification
+
+Optional tooling (not needed to run the App):
+
+```bash
+pip install playwright==1.64.1
+PLAYWRIGHT_BROWSERS_PATH=/tmp/hmda-browsers python -m playwright install chromium
+# With PORT=8000 ./app.sh running:
+PLAYWRIGHT_BROWSERS_PATH=/tmp/hmda-browsers python -m scripts.browser_smoke
+```
+
+The browser script checks the five pages, year and fairness filters, mobile layout/navigation, JavaScript errors, and prefix-preserving assets/API requests via a simulated prefix-stripping proxy. Screenshots go to ignored `outputs/screenshots/`. This simulation does not establish that a deployed Domino App can access its Dataset.
+
+The production bundle currently emits Vite's size advisory (about 571 kB JavaScript / 165 kB gzip, including charts). It builds successfully; route-level splitting is a possible future optimization. The inherited Python environment has existing dependency conflicts among Domino, conda/build tooling and MLflow. Application tests pass with the documented runtime; use a dedicated Compute Environment for deployment rather than treating the shared workspace as a clean dependency baseline.
+
+## Private App Preview without workspace port forwarding
+
+The workspace's advertised port-forward URL returned an ingress 404 even while the app and local code-server proxy responded successfully. Use Domino's built-in App Preview as the alternative.
+
+`./preview.sh` is the dedicated entry point. It uses the small versioned `frontend/dist` production bundle, so Node.js is not required in the preview container. Unless `HMDA_REPORT_DIR` is explicitly configured, it creates a unique temporary report directory and evaluates the existing saved pipeline into it before starting the app. It does not train models, overwrite Dataset files, or publish an App. All required data/report checks must pass before it starts. The Compute Environment still requires `backend/requirements.txt` and the attached HMDA Dataset.
+
+App Preview resolves the project's Git commit, rather than this workspace's uncommitted files. Commit/push requires owner approval before creating this preview. Use a review branch and a grant-based draft; do not publish publicly. Rebuild `frontend/dist` whenever frontend source changes and include the resulting assets in the approved commit. The main `app.sh` workflow remains available for environments with Node or an existing frontend build.
