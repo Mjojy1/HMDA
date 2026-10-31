@@ -29,7 +29,7 @@ The preferred fairness CSV is still absent from the Dataset itself. The existing
 
 For this audit, the saved preferred pipeline was evaluated in memory, without fitting or writing reports. Every displayed group's application count, actual denials, origination rate, historical positive rate, predicted positive rate and denial recall matched. The confusion matrix matched `[[1079,1100],[1848,20973]]`; model/data hashes matched. Zero-denial groups retain null recall; small groups are flagged and filtered; unavailable demographics are retained. Comparisons remain descriptive and unadjusted.
 
-## Local fixes awaiting approval
+## Audited fixes
 
 1. **Incorrect lineage counts:** categorical nulls had been normalized to `Missing` before `.isna()` was counted. The deployed app reports zero for 1,253 missing debt-to-income values and 313 missing loan terms. Local API/UI now correctly reports these and separately reports Exempt counts.
 2. **Hardcoded model context:** the fairness threshold and several evaluation-year/split labels are now driven by saved metadata responses. Chart statistics and comparison scores were already API-backed; no mock dashboard data was found.
@@ -44,16 +44,21 @@ Source mapping: Executive Overview → overview/trends/metrics; Lending → filt
 
 Existing preview: `https://rweoriol149036.cs.domino.tech/preview/6ae541e906b33052fec8c17d/`
 
-Read-only management checks confirm grant-based visibility, draft status, `Running`, mounted Datasets, commit `793c6ecb125c199e4e31dd856d790750fcb75f8c`, and `preview.sh` as version entry point. Logs show `preview.sh` running its saved-model evaluation and artifact validation, then executing `app.sh` on `0.0.0.0:8888`. Authenticated dashboard/API and readiness checks pass. The locally fixed `app.sh` was also started separately on port 8003 for audit testing.
+At audit time, read-only management checks confirmed grant-based visibility, draft status, `Running`, mounted Datasets, commit `793c6ecb125c199e4e31dd856d790750fcb75f8c`, and `preview.sh` as version entry point. Logs show `preview.sh` running its saved-model evaluation and artifact validation, then executing `app.sh` on `0.0.0.0:8888`. Authenticated dashboard/API and readiness checks pass. The locally fixed `app.sh` was also started separately on port 8003 for audit testing.
 
-No configuration change is required just to view the existing preview. To apply fixes:
+Publication preparation reviewed the complete change set from `origin/main`: no credential literals, Dataset/model files, local reports, logs, or files over 1 MB were found. The production bundle is intentionally versioned for a Node-free preview; rebuilding it produced identical tracked assets. Backend regression tests passed again (25 tests). The audited implementation and fixes were already committed as `793c6ec` and `1c1ab69`; preserve those commits when advancing `main`.
 
-1. Review and approve the local changes, including the rebuilt `frontend/dist` bundle, before committing and pushing the preview branch.
-2. After that approval and push, open **App Preview** in `HMDA_Project` and reload/sync it to the new commit (the preview may auto-sync pushed commits). Keep launch script **`preview.sh`**, the existing Python Compute Environment, port **8888**, Dataset mounting enabled, and restricted access.
-3. Confirm `api/ready` is HTTP 200, all five pages load, and lineage shows the corrected missing counts. Verify the new commit in lineage/runtime metadata.
-4. Only if separately approved, publish a version and deploy it. Do not publish the current preview as though it contains the uncommitted audit fixes.
+After the approved push to `origin/main`, update the private preview manually:
 
-If selecting `app.sh` directly instead of `preview.sh`, provide the existing preferred reports via a durable `HMDA_REPORT_DIR`. A fresh container does not inherit workspace `outputs/`. `app.sh` intentionally does not generate reports; `preview.sh` generates only analytical reports from existing trusted inputs. No model training or data regeneration is needed.
+1. In the `HMDA_Project` Workspace, use the Git branch selector to select `main` and pull the latest remote commit if needed. Keep automatic preview synchronization off until ready to review.
+2. Open **App preview**, then **Preview settings**. Verify **Git reference** identifies `main`. This display follows the workspace branch; it is not a separate editable branch selector.
+3. When **New commits available** appears, verify **Latest commit** against the SHA reported after the push and click **Update to latest**. Wait for syncing/rebuilding to finish. **Save and reload** is for settings changes; no entry-point or environment change is required here. Keep `preview.sh`, the existing Compute Environment, port 8888, Dataset mounting, and restricted access.
+4. Open the preview URL plus `api/ready`: require HTTP 200, `status: ready`, and `ready` for data, metrics, importance, fairness, and evaluation. Confirm `api/lineage` reports the new Git SHA.
+5. On **Data lineage & governance**, confirm missing/nonnumeric counts: debt-to-income **1,253**, loan term **313**. Both separately show **2,325 exempt**.
+6. Review all five pages: **Executive overview** (125,000 records); **Lending analytics** (filters change records/charts); **Model intelligence** (gradient boosting ROC-AUC 0.7785, threshold 0.89, importance and confusion matrix); **Fair-lending monitoring** (size filter, limited-support and unavailable-demographic warnings); **Data lineage & governance** (commit, sources, corrected counts, readiness). Check browser Console for errors and Network for failed API requests.
+7. Stop at the private preview. Do not publish or deploy until separately approved.
+
+The existing `preview.sh` evaluates the saved model into temporary reports when starting a fresh runtime; it does not train or modify Dataset files. Neither entry-point script needs changing. Workspace `outputs/` is not copied to new App containers.
 
 ## Reproduce checks
 
