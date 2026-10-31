@@ -145,3 +145,54 @@ The workspace's advertised port-forward URL returned an ingress 404 even while t
 `./preview.sh` is the dedicated entry point. It uses the small versioned `frontend/dist` production bundle, so Node.js is not required in the preview container. Unless `HMDA_REPORT_DIR` is explicitly configured, it creates a unique temporary report directory and evaluates the existing saved pipeline into it before starting the app. It does not train models, overwrite Dataset files, or publish an App. All required data/report checks must pass before it starts. The Compute Environment still requires `backend/requirements.txt` and the attached HMDA Dataset.
 
 App Preview resolves the project's Git commit, rather than this workspace's uncommitted files. Commit/push requires owner approval before creating this preview. Use a review branch and a grant-based draft; do not publish publicly. Rebuild `frontend/dist` whenever frontend source changes and include the resulting assets in the approved commit. The main `app.sh` workflow remains available for environments with Node or an existing frontend build.
+
+## Reproducible saved-model evaluation Job
+
+In **HMDA_Project → Jobs → Run**, use this command from the repository root:
+
+```bash
+python jobs/evaluate_model.py
+```
+
+Select the Git revision containing this script and the existing Python 3.12 Compute
+Environment with `backend/requirements.txt` installed (including scikit-learn 1.7.2,
+joblib, pandas, PyArrow, NumPy and threadpoolctl). No Node, frontend build, package
+installation at startup, model fitting, or App restart is needed. Attach the
+existing Dataset at `/mnt/data/HMDA_Project`; the Job requires read access to the
+saved model, `models/gradient_boosting_metrics.json`, and `hmda_2025.parquet`, plus
+write access specifically to `reports/job_runs/`. A read-only Dataset snapshot
+cannot accept these outputs; use a writable mount for this requested destination.
+
+The script reuses the backend's feature order and preprocessing. It verifies the
+2025 cohort and saved action mapping (1 + 2 positive, 3 denied), applies the saved
+0.89 threshold, and compares all four metrics against the saved model metrics
+with absolute tolerance `1e-10` and zero relative tolerance. Denial recall uses
+class 0; confusion-matrix rows/columns are ordered `[0, 1]`.
+
+If `gradient_boosting_evaluation_2025.json` exists in Dataset `reports/`, or in the
+backend's `HMDA_REPORT_DIR` fallback (default workspace `outputs/reports/`), it also
+compares its metrics, confusion matrix, threshold, and model/data hashes. This
+supplemental report is currently absent from the Dataset; a fresh Job does not
+inherit workspace outputs. Its absence is recorded explicitly, and the mandatory
+saved model metrics comparison still runs. To require an existing supplemental
+report, use `python jobs/evaluate_model.py --evaluation-report /path/to/existing/gradient_boosting_evaluation_2025.json`.
+A missing explicitly requested report fails the Job; no reference is regenerated.
+
+Each execution writes a new, exclusively created file:
+`/mnt/data/HMDA_Project/reports/job_runs/evaluation_2025_<UTC timestamp>_<UUID>.json`.
+It contains execution status/times, exit code, Git SHA and dirty-tree indicator,
+Domino run ID, package versions, input paths/hashes, cohort details, metrics,
+confusion matrix, and comparison results. Validation failures also produce a
+failure report when the destination is writable. Failure to write the report
+prints an error and exits nonzero. Existing dashboard reports and model/data
+files are never overwritten. These reports live outside the Git repository.
+
+Verify **Succeeded** in Domino Jobs, exit code **0**, and stdout
+`HMDA 2025 evaluation: SUCCEEDED`. Open the printed report path: require
+`status: succeeded` and all comparison `passed` values true. Expected metrics:
+ROC-AUC 0.7784548518, accuracy 0.88208, balanced accuracy 0.7071016146,
+denial recall 0.4951812758; confusion matrix `[[1079,1100],[1848,20973]]`.
+Use the recorded Git SHA and input hashes to identify the evaluated version.
+A dirty working tree means the commit alone does not capture local source edits.
+
+Run the focused tests with `python -m pytest -q tests/test_evaluate_model.py`.
