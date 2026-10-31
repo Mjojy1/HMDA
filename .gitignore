@@ -14,3 +14,11 @@ outputs/
 # Small, tested frontend bundle enables Domino Preview without Node.js.
 !frontend/dist/
 !frontend/dist/**
+
+# Local environments and generated files
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+outputs/
