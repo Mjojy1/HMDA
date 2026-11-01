@@ -4,6 +4,25 @@ Historical Lending Analytics, Model Intelligence & Fair-Lending Monitoring.
 
 A React + TypeScript + Tailwind/Recharts dashboard served by one FastAPI process. It reads the existing Domino Dataset without modifying it. This is historical research and monitoring, **not underwriting**. No individual decision endpoint is provided.
 
+## Complete training workflow and handoff
+
+The repository now includes a standalone ingestion → validation → training →
+holdout/fairness evaluation → artifact workflow in `workflows/train_hmda.py`.
+The existing dashboard, saved-model Job and MLflow comparison remain separate.
+For a Domino Job with the existing Dataset attached read-only:
+
+```bash
+python workflows/train_hmda.py
+```
+
+Use Python 3.12 with `workflows/requirements.txt`. New outputs go only to a unique
+`/mnt/artifacts/hmda-training/<timestamp>-<UUID>/` directory. For local verification:
+`python workflows/train_hmda.py --output-root outputs/training-runs`.
+Read [the FDE handoff](docs/HANDOFF.md) for exact setup, source modes, reproducibility,
+success checks and promotion boundaries, and [the source contract](docs/HMDA_SOURCE.md)
+for official CFPB sources and the current HTTP 403 archive-access limitation.
+No synthetic fallback is used. The original notebook remains preserved.
+
 ## Critical finding: actual target differs from the initial brief
 
 Inspection of the notebook and all five Parquet files found action codes **1, 2 and 3**, not only 1 and 3. The existing `approved` label is 1 for **originated (1) OR approved but not accepted (2)**, and 0 for denied (3). The application preserves the trained pipeline and saved metrics, labels the historical target explicitly, and calculates **origination separately from action 1**. Restricting the model to actions 1 and 3 would change the evaluation; that has not been done.
@@ -76,7 +95,7 @@ Data loads once per process; artifact reads are cached where appropriate. Restar
 
 ## Domino Compute Environment and App deployment
 
-**No App has been published or deployed by this implementation.** Workspace mount access is verified; App-runtime mount access must be verified separately.
+**Historical setup instructions:** the owner now reports a published, healthy production App. The new training workflow does not change or redeploy it. Earlier audit results describe the then-current preview; verify current runtime readiness separately.
 
 1. In `HMDA_Project`, launch a VS Code Workspace from the Git branch containing these files. Changes must be committed and pushed **only after owner approval** before a Git-based App can reliably publish them.
 2. Select/build a Compute Environment with Python 3.12, pinned `backend/requirements.txt`, and Node 22+ (24.19 tested). Install build dependencies in the environment or allow `npm ci` at startup. The current workspace's `.venv` does not transfer to an App. A possible environment customization is `RUN pip install nodejs-wheel==24.19.0` plus the backend packages; ensure the environment's Python matches `HMDA_PYTHON`.
@@ -103,9 +122,9 @@ python -m scripts.validate_artifacts
 python -m scripts.build_reports --output /mnt/artifacts/hmda-reports/run-001
 ```
 
-For a Job, select the approved code commit, matching Compute Environment, and attached Dataset. Set `HMDA_REPORT_DIR` to the generated run directory when validating or consuming outputs. Ensure Job artifacts are persisted and accessible to the App; `/mnt/artifacts` is not implicitly shared between runs. Save the Job ID with the commit, environment version, Dataset snapshot and generated hashes. Model evaluation and report generation share one command to enforce metric verification before writing reports. No data downloads, model fitting, threshold tuning or artifact overwrites occur. Missing models require separate approval to retrain.
+For a Job, select the approved code commit, matching Compute Environment, and attached Dataset. Set `HMDA_REPORT_DIR` to the generated run directory when validating or consuming outputs. Ensure Job artifacts are persisted and accessible to the App; `/mnt/artifacts` is not implicitly shared between runs. Save the Job ID with the commit, environment version, Dataset snapshot and generated hashes. Model evaluation and report generation share one command to enforce metric verification before writing reports. No data downloads, model fitting, threshold tuning or artifact overwrites occur. The evaluation command never retrains. Use the separately documented training workflow to create a new model in an isolated run directory.
 
-MLflow logging is intentionally not enabled: this environment already reports incompatible MLflow/cryptography dependencies, and report files plus hashes provide reproducible evidence without modifying experiment state. Tracking can be added after an environment-compatible MLflow setup is agreed.
+The original environment had MLflow dependency conflicts. These were subsequently resolved for the standalone retrospective comparison: two runs were logged and read back from Domino managed tracking. See the MLflow section below. The new training workflow writes isolated run artifacts and does not silently replace those existing comparison runs.
 
 ## Interpretation and limits
 
@@ -136,7 +155,7 @@ PLAYWRIGHT_BROWSERS_PATH=/tmp/hmda-browsers python -m scripts.browser_smoke
 
 The browser script checks the five pages, year and fairness filters, mobile layout/navigation, JavaScript errors, and prefix-preserving assets/API requests via a simulated prefix-stripping proxy. Screenshots go to ignored `outputs/screenshots/`. This simulation does not establish that a deployed Domino App can access its Dataset.
 
-The production bundle currently emits Vite's size advisory (about 571 kB JavaScript / 165 kB gzip, including charts). It builds successfully; route-level splitting is a possible future optimization. The inherited Python environment has existing dependency conflicts among Domino, conda/build tooling and MLflow. Application tests pass with the documented runtime; use a dedicated Compute Environment for deployment rather than treating the shared workspace as a clean dependency baseline.
+The production bundle currently emits Vite's size advisory (about 571 kB JavaScript / 165 kB gzip, including charts). It builds successfully; route-level splitting is a possible future optimization. The initial shared Python environment had dependency conflicts. MLflow was subsequently verified for the retrospective comparison. Use the documented pinned requirements and a versioned Compute Environment for reproducible workloads rather than assuming all workspace packages transfer to a fresh runtime.
 
 ## Private App Preview without workspace port forwarding
 

@@ -71,3 +71,64 @@ PLAYWRIGHT_BROWSERS_PATH=/tmp/hmda-browsers HMDA_TEST_URL=http://127.0.0.1:8003/
 ```
 
 Private preview checks support `--domino-auth` for `audit_integration`, and `HMDA_TEST_DOMINO_AUTH=1` with the preview URL for `browser_smoke`. Temporary workspace tokens remain in memory and are never written to source or reports. Evidence is in ignored `outputs/audit/`.
+
+## End-to-end training workflow addendum — 2026-11-01
+
+The historical audit above concerned the existing saved-model dashboard, not a
+training pipeline. The new work fills that separate requirement without changing
+the production App, entry scripts, API contracts, frontend bundle, existing
+Job/evaluation/MLflow scripts, model files, or Dataset reports. The notebook is
+preserved. Presentation work was explicitly excluded by the owner's follow-up;
+no replacement or claims review was performed.
+
+Already implemented and retained: five-page dashboard, real-data APIs,
+saved-model evaluation Job, demographic/lineage reports, and managed MLflow
+comparison. Newly added: bounded official-source ingestion and validated offline
+inputs, a deterministic temporal training/evaluation command, isolated artifact
+creation, focused tests, and FDE source/handoff documentation.
+
+Actual verification commands:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q tests/test_training_workflow.py
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q
+PATH="/mnt/code/.venv/bin:$PATH" npm run build --prefix frontend
+.venv/bin/python workflows/train_hmda.py --output-root outputs/training-runs
+```
+
+- New workflow tests: **16 passed**, including target mapping, schema/year/label
+  failures, chunk-independent deterministic archive sampling, explicit download
+  opt-in and HTTP/size failures, temporal split, train-only preprocessing,
+  undefined metrics/small demographic groups, threshold tie-breaking,
+  end-to-end artifact hashes, repeat model reproducibility and failure manifests.
+- Final full suite, including the preprocessing leakage test: **60 passed**.
+  Existing untracked
+  `tests/test_model_comparison.py` was present on entry and preserved.
+- TypeScript/Vite build passed. The tracked frontend bundle is unchanged;
+  its existing 572 kB JavaScript size advisory remains. Python tests report one
+  upstream dateutil deprecation warning.
+- The real mounted-data run **succeeded locally in the Workspace**, training on
+  75,000 rows (2021–2023), selecting threshold on 25,000 (2024), and evaluating
+  25,000 (2025). Threshold .89; holdout ROC-AUC 0.7766438824461395, accuracy .8692,
+  balanced accuracy .7062733114244931, denial recall .5089490592014686.
+  Matrix: `[[1109,1070],[2200,20621]]`.
+- New fairness report contains 18 demographic groups across race, ethnicity and
+  sex; four are flagged for limited sample support. These statistics are
+  descriptive and do not establish discrimination or underwriting suitability.
+- All 15 recorded output artifact hashes verified, and all **19 pre-existing
+  Dataset file hashes** remained unchanged. Serialization prediction equality
+  was also checked inside the workflow.
+- Local evidence directory:
+  `outputs/training-runs/20261101T000132254510Z-9024d53294194279802c4a152cee0159/`.
+  This is ignored, local evidence, **not durable Domino Job output**. Its
+  `run.json` and `code.zip` record the actual source and dirty working tree.
+- No new Domino training Job was submitted. No commit, push, publication,
+  deployment, model promotion or registry write was performed.
+
+Official CFPB field/source/terms documentation was reviewed; the archive host
+returned HTTP **403** to metadata-only checks for all five annual URLs. Full
+remote archive ingestion was not executed. Controlled archive/network fixtures
+passed; fresh remote ingestion still requires access to the official archives or
+local archived copies. The mounted offline path is fully exercised. See
+[HMDA_SOURCE.md](docs/HMDA_SOURCE.md) for exact provenance limitations and
+[HANDOFF.md](docs/HANDOFF.md) for the one-command Domino procedure.
