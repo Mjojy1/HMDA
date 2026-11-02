@@ -285,3 +285,11 @@ nonzero; rerunning repairs/reuses the existing identity without starting over.
 
 Tests: `python -m pytest -q tests/test_model_comparison.py` (uses an in-memory
 tracking double; real tracking verification is performed by the command above).
+
+## Engineering verification
+
+See [production-readiness evidence](docs/PRODUCTION_READINESS.md) for the modular
+architecture, version-control/test evidence and remaining operational acceptance
+checks. Run `bash scripts/check.sh` in the prepared verification environment;
+it checks tests, TypeScript and an isolated frontend build without retraining or
+deploying.
