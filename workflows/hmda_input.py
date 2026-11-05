@@ -140,6 +140,9 @@ def ingest(run_dir, input_dir, source='mounted', allow_download=False, size=2500
         # The run directory is exclusively created; no existing Dataset is written.
         with target.open('xb') as stream: frame.to_parquet(stream, index=False)
         details.update(output_path=str(target), output_sha256=digest(target), columns=list(frame.columns),
+                       schema={c: str(t) for c, t in frame.dtypes.items()},
+                       sample_seed=details.get('sample_seed', historical.get(str(year), {}).get('sample_seed')),
+                       sample_seed_note='Archive seed is explicit; mounted seed is upstream metadata or unknown, never inferred from training seed',
                        class_counts={str(k): int(v) for k, v in frame.approved.value_counts().items()},
                        missing_demographic_fields=[c for c in DEMOGRAPHICS if c not in frame])
         results.append(details)

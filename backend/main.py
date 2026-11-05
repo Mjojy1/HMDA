@@ -9,6 +9,8 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import ROOT, FEATURES, TARGET_NOTE
 from backend.data_service import DataService, DataUnavailable
+from backend.analyst import Question, ToolCall, answer, execute_tool
+from backend.llm_provider import provider_status
 
 
 def create_app(service=None):
@@ -16,7 +18,7 @@ def create_app(service=None):
     svc = service or DataService()
     origins = os.getenv('HMDA_CORS_ORIGINS','').split(',')
     if origins != ['']:
-        app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=['GET'], allow_headers=['Accept'])
+        app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=['GET', 'POST'], allow_headers=['Accept', 'Content-Type'])
 
     @app.exception_handler(DataUnavailable)
     async def unavailable(request: Request, exc: DataUnavailable):
@@ -40,6 +42,19 @@ def create_app(service=None):
             except DataUnavailable as exc: checks[name] = str(exc)
         ok = all(v == 'ready' for v in checks.values())
         return JSONResponse(status_code=200 if ok else 503,content={'status':'ready' if ok else 'degraded','checks':checks})
+
+    @app.get('/api/fairness/groups')
+    def fairness_groups():
+        evidence, source = execute_tool(svc, ToolCall(name='fairness'))
+        return dict(evidence, source=source, target_note=TARGET_NOTE)
+
+    @app.get('/api/analyst/status')
+    def analyst_status():
+        return {'available': True, **provider_status(), 'max_steps': 6, 'read_only': True}
+
+    @app.post('/api/analyst')
+    def analyst(question: Question):
+        return answer(svc, question)
 
     @app.get('/api/overview')
     def overview(year: int|None=None, loan_type: str|None=None, race: str|None=None):

@@ -5,3 +5,4 @@ pyarrow==21.0.0
 pydantic==2.13.5
 joblib==1.6.0
 scikit-learn==1.7.2
+requests==2.34.2

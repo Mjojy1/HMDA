@@ -14,17 +14,14 @@ sys.path.insert(0, str(ROOT))
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import (accuracy_score, balanced_accuracy_score, brier_score_loss,
                             confusion_matrix, log_loss, roc_auc_score)
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
 from threadpoolctl import threadpool_limits
 from backend.config import FEATURES, NUMERIC, CATEGORICAL, TARGET_NOTE, YEARS
-from backend.data_service import prepare_features
+from backend.data_service import HMDAFeaturePreprocessor, prepare_features
 from jobs.evaluate_model import provenance
 from workflows.hmda_input import DEMOGRAPHICS, digest, ingest, write_json
 
@@ -100,7 +97,7 @@ def fairness(frame, score, threshold):
             rows.append(row)
             if not row['small_group'] and not unavailable: field_rows.append(row)
         gaps[field] = {}
-        for metric in ['predicted_approval_rate', 'historical_origination_rate', 'denial_recall', 'positive_recall', 'false_positive_rate']:
+        for metric in ['predicted_approval_rate', 'historical_approval_rate', 'historical_origination_rate', 'denial_recall', 'positive_recall', 'false_positive_rate', 'false_negative_rate']:
             rates = [r[metric] for r in field_rows if r[metric] is not None]
             gaps[field][metric] = {'max_minus_min': max(rates) - min(rates) if len(rates) > 1 else None,
                                   'eligible_groups': len(rates)}
@@ -110,12 +107,13 @@ def fairness(frame, score, threshold):
 
 
 def pipeline(seed, iterations):
-    preprocessing = ColumnTransformer([
-        ('numeric', SimpleImputer(strategy='median', keep_empty_features=True), NUMERIC),
-        ('categorical', OneHotEncoder(handle_unknown='ignore', sparse_output=False), CATEGORICAL)])
-    return Pipeline([('preprocessor', preprocessing), ('classifier', HistGradientBoostingClassifier(
-        max_iter=iterations, learning_rate=.05, max_leaf_nodes=15, l2_regularization=1.,
-        early_stopping=False, random_state=seed))])
+    return Pipeline([
+        ('preprocessor', HMDAFeaturePreprocessor()),
+        ('classifier', HistGradientBoostingClassifier(
+            max_iter=iterations, learning_rate=.05, max_leaf_nodes=15, l2_regularization=1.,
+            early_stopping=False, random_state=seed,
+        )),
+    ])
 
 
 def train(run_dir, seed=42, iterations=200, repeats=5):
@@ -181,8 +179,17 @@ def execute(args):
                 'command_arguments': {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
                 'versions': {p: importlib.metadata.version(p) for p in ['numpy', 'pandas', 'pyarrow', 'scipy', 'scikit-learn', 'joblib', 'threadpoolctl', 'requests']},
                 'python': sys.version, 'limitations': LIMITATIONS}
+    tracker = None
+    manifest['tracking'] = {'status': 'disabled', 'reason': 'Explicit local mode; no managed tracking claimed'}
     try:
-        source_files = ['workflows/train_hmda.py', 'workflows/hmda_input.py', 'workflows/requirements.txt',
+        if args.tracking == 'required':
+            if args.ingest_only: raise ValueError('Training tracking requires training, not --ingest-only')
+            from workflows.tracking import TrainingTracking
+            tracker = TrainingTracking()
+            tracker.start(manifest)
+            manifest['tracking'] = {'status': 'running', 'run_id': tracker.run_id}
+        source_files = ['workflows/train_hmda.py', 'workflows/hmda_input.py', 'workflows/tracking.py',
+                        'experiments/log_model_comparison.py', 'workflows/requirements.txt',
                         'backend/config.py', 'backend/data_service.py', 'backend/schemas.py', 'jobs/evaluate_model.py',
                         'docs/HMDA_SOURCE.md']
         with zipfile.ZipFile(run_dir / 'code.zip', 'x') as archive:
@@ -193,10 +200,17 @@ def execute(args):
         if not args.ingest_only:
             metadata, evaluation = train(run_dir, args.seed, args.max_iter, args.importance_repeats)
             manifest.update(training=metadata, model_sha256=evaluation['model_sha256'])
+            if tracker:
+                manifest['tracking'] = tracker.finish(run_dir, manifest, metadata, evaluation)
         manifest['artifact_sha256'] = {str(p.relative_to(run_dir)): digest(p) for p in sorted(run_dir.rglob('*')) if p.is_file()}
         manifest['status'] = 'succeeded'
     except Exception as exc:
         manifest.update(status='failed', error=f'{type(exc).__name__}: {exc}')
+        if args.tracking == 'required':
+            manifest['tracking'].update(status='failed', error=str(exc))
+        if tracker:
+            try: tracker.fail()
+            except Exception as tracking_error: manifest['tracking']['termination_error'] = str(tracking_error)
         raise
     finally:
         manifest['finished_at'] = utc()
@@ -217,6 +231,8 @@ def parser():
     p.add_argument('--max-iter', type=int, default=200)
     p.add_argument('--importance-repeats', type=int, default=5)
     p.add_argument('--ingest-only', action='store_true')
+    p.add_argument('--tracking', choices=['off', 'required'], default='off',
+                   help='required: Domino managed MLflow with server readback; off: explicit local execution')
     return p
 
 

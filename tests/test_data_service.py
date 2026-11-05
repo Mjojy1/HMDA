@@ -1,8 +1,8 @@
 import json
 import pandas as pd
 import pytest
-from backend.data_service import DataService, DataUnavailable
-from backend.config import FEATURES
+from backend.data_service import DataService, DataUnavailable, build_preprocessor
+from backend.config import FEATURES, NUMERIC, CATEGORICAL
 
 @pytest.fixture
 def fixture_service(tmp_path):
@@ -14,6 +14,24 @@ def fixture_service(tmp_path):
         d['derived_race']=['A',None,'B']
         d.to_parquet(tmp_path/f'hmda_{year}.parquet')
     return DataService(tmp_path,tmp_path/'reports')
+
+def test_build_preprocessor_handles_missing_values():
+    frame = pd.DataFrame({
+        'loan_amount': [1000.0, None, 2000.0],
+        'income': [50000.0, 60000.0, None],
+        'combined_loan_to_value_ratio': [80.0, None, 70.0],
+        'debt_to_income_ratio': ['30', None, '40'],
+        'loan_type': ['1', '2', None],
+        'loan_term': ['360', None, '180'],
+    })
+    preprocessor = build_preprocessor()
+    transformed = preprocessor.fit_transform(frame)
+    assert transformed.shape[0] == 3
+    assert transformed.shape[1] > 0
+    assert frame['debt_to_income_ratio'].isna().sum() > 0
+    assert 'Missing' in str(preprocessor.preprocessor.named_transformers_['categorical'].categories_[0])
+    assert preprocessor.preprocessor.named_transformers_['numeric'].statistics_.shape[0] == len(NUMERIC)
+
 
 def test_missing_dataset(tmp_path):
     with pytest.raises(DataUnavailable,match='hmda_2021'): DataService(tmp_path).data

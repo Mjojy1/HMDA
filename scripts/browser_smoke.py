@@ -8,7 +8,7 @@ output=Path(os.getenv('HMDA_SCREENSHOT_DIR','outputs/screenshots'));output.mkdir
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True,args=['--no-sandbox'])
     page=browser.new_page(viewport={'width':1440,'height':1000},device_scale_factor=1,reduced_motion='reduce')
-    titles={'overview':'Executive overview','lending':'Lending analytics','model':'Model intelligence','fairness':'Fair-lending monitoring','lineage':'Data lineage & governance'}
+    titles={'analyst':'Analyst copilot','overview':'Executive overview','lending':'Lending analytics','model':'Model intelligence','fairness':'Fair-lending monitoring','lineage':'Data lineage & governance'}
     errors=[]
     failed_responses=[]
     if os.getenv('HMDA_TEST_DOMINO_AUTH')=='1':
@@ -24,7 +24,7 @@ with sync_playwright() as p:
     page.on('console',lambda msg: errors.append(msg.text) if msg.type=='error' else None)
     page.on('response',lambda response: failed_responses.append((response.url,response.status)) if response.status>=400 else None)
     page.on('pageerror',lambda e: errors.append(str(e)))
-    for route in ['overview','lending','model','fairness','lineage']:
+    for route in ['overview','lending','model','fairness','lineage','analyst']:
         page.goto(base+'#'+route)
         page.wait_for_load_state('networkidle')
         expect(page.locator('h1')).to_have_text(titles[route])
@@ -32,6 +32,13 @@ with sync_playwright() as p:
         assert page.locator('[role=alert]').count()==0, page.locator('body').inner_text()
         page.screenshot(path=str(output/f'{route}.png'),full_page=True)
         print('Rendered',route)
+    page.goto(base+'#analyst');page.wait_for_load_state('networkidle')
+    page.get_by_role('button',name='Show aggregate outcomes for 2025',exact=True).click()
+    expect(page.locator('.analyst-turn')).to_contain_text('25,000')
+    expect(page.locator('.analyst-turn')).to_contain_text('approval (actions 1+2)')
+    page.get_by_label('Your aggregate question').fill('Score applicant Jane')
+    page.get_by_role('button',name='Ask analyst',exact=True).click()
+    expect(page.locator('.analyst-turn').last).to_contain_text('cannot score applicants')
     page.goto(base+'#lending');page.wait_for_load_state('networkidle')
     page.get_by_label('year',exact=True).select_option('2025')
     page.wait_for_load_state('networkidle')
@@ -40,7 +47,7 @@ with sync_playwright() as p:
     page.get_by_label('Minimum group size').select_option('0')
     page.wait_for_load_state('networkidle')
     expect(page.locator('main')).to_contain_text('Free Form Text Only')
-    for route in ['overview','lending','model','fairness','lineage']:
+    for route in ['overview','lending','model','fairness','lineage','analyst']:
         page.set_viewport_size({'width':390,'height':844})
         page.goto(base+'#'+route);page.wait_for_load_state('networkidle')
         expect(page.locator('h1')).to_have_text(titles[route])
@@ -68,4 +75,4 @@ with sync_playwright() as p:
     assert not failed_responses,failed_responses
     assert not errors,errors
     browser.close()
-print('All five pages, filters and mobile navigation passed; no JavaScript errors.')
+print('All six pages, analyst evidence/refusal, filters and mobile navigation passed; no JavaScript errors.')

@@ -5,22 +5,61 @@ from functools import cached_property
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
 from backend.config import DATA_DIR, REPORT_DIR, YEARS, FEATURES, NUMERIC, CATEGORICAL, TARGET_NOTE
 from backend.schemas import ModelMetrics
 
 class DataUnavailable(Exception):
     pass
 
-def records(frame):
-    return json.loads(frame.to_json(orient='records'))
 
-def prepare_features(frame):
+def _normalize_features(frame):
     x = frame[FEATURES].copy()
     for c in NUMERIC:
         x[c] = pd.to_numeric(x[c], errors='coerce').replace([np.inf, -np.inf], np.nan)
     for c in CATEGORICAL:
         x[c] = x[c].fillna('Missing').astype(str)
     return x
+
+
+class HMDAFeaturePreprocessor:
+    """Single explicit preprocessing contract for HMDA features.
+
+    Normalization is applied before fitting/transformation, and the fitted sklearn
+    transformers perform median imputation for numerics and one-hot encoding for
+    categoricals. This keeps the contract explicit and auditable in one place.
+    """
+
+    def __init__(self):
+        self.preprocessor = ColumnTransformer([
+            ('numeric', SimpleImputer(strategy='median', keep_empty_features=True), NUMERIC),
+            ('categorical', OneHotEncoder(handle_unknown='ignore', sparse_output=False), CATEGORICAL),
+        ])
+
+    def fit(self, frame, y=None):
+        self.preprocessor.fit(_normalize_features(frame))
+        return self
+
+    def transform(self, frame):
+        return self.preprocessor.transform(_normalize_features(frame))
+
+    def fit_transform(self, frame, y=None):
+        return self.preprocessor.fit_transform(_normalize_features(frame))
+
+
+def build_preprocessor():
+    return HMDAFeaturePreprocessor()
+
+
+def prepare_features(frame):
+    return _normalize_features(frame)
+
+
+def records(frame):
+    return json.loads(frame.to_json(orient='records'))
 
 class DataService:
     def __init__(self, data_dir=DATA_DIR, report_dir=REPORT_DIR):

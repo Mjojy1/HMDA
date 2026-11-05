@@ -3,3 +3,5 @@ numpy==2.5.4
 scipy==1.16.2
 threadpoolctl==3.7.0
 requests==2.34.2
+# Managed training tracking; required mode rejects local stores.
+mlflow==3.3.2

@@ -7,12 +7,12 @@ A React + TypeScript + Tailwind/Recharts dashboard served by one FastAPI process
 ## Complete training workflow and handoff
 
 The repository now includes a standalone ingestion → validation → training →
-holdout/fairness evaluation → artifact workflow in `workflows/train_hmda.py`.
+holdout/fairness evaluation → verified managed tracking → artifact workflow in `workflows/train_hmda.py`.
 The existing dashboard, saved-model Job and MLflow comparison remain separate.
 For a Domino Job with the existing Dataset attached read-only:
 
 ```bash
-python workflows/train_hmda.py
+python workflows/train_hmda.py --tracking required
 ```
 
 Use Python 3.12 with `workflows/requirements.txt`. New outputs go only to a unique
@@ -22,6 +22,29 @@ Read [the FDE handoff](docs/HANDOFF.md) for exact setup, source modes, reproduci
 success checks and promotion boundaries, and [the source contract](docs/HMDA_SOURCE.md)
 for official CFPB sources and the current HTTP 403 archive-access limitation.
 No synthetic fallback is used. The original notebook remains preserved.
+
+## Analyst copilot and current verification
+
+The new `#analyst` source page supports aggregate questions through explicit,
+read-only analytics tools. Answers include API evidence, target definitions and
+limitations; the tool interface cannot score applicants or execute arbitrary code.
+Domino AI Gateway runs a bounded multi-step tool loop when configured, while deterministic rendering
+keeps metric values grounded in validated artifacts. With no configured endpoint,
+the UI explicitly labels the agent unavailable and offers basic single-tool lookup.
+The agent observes tool results, chooses follow-up tools, and finishes with validated
+evidence citations; its activity trace is visible in the conversation. See
+[analyst configuration](docs/HANDOFF.md#analyst-configuration-and-boundaries).
+
+On **2026-11-03**, the complete workflow ran locally on the mounted real HMDA
+sample and as Domino Job `6aea507a06b33052fec8cdfd`. Managed MLflow training run
+`41be1809261343c48d2518588de89e97` finished and its values/artifacts were read back.
+This is actual training, separate from the earlier retrospective comparison.
+See [verification evidence and requirement status](docs/VERIFICATION.md).
+Live CFPB archive access returned HTTP 403; no new source download is claimed.
+The original Dataset, models, reports and deployed App were preserved. The local
+frontend bundle now includes the analyst page; its predecessor is backed up under
+`outputs/frontend-before-agent/`. Launch the workspace app and choose **Analyst
+copilot**, or open `#analyst`. No deployment was performed by this change.
 
 ## Critical finding: actual target differs from the initial brief
 
@@ -293,3 +316,14 @@ architecture, version-control/test evidence and remaining operational acceptance
 checks. Run `bash scripts/check.sh` in the prepared verification environment;
 it checks tests, TypeScript and an isolated frontend build without retraining or
 deploying.
+
+## Direct OpenAI analyst connection
+
+The analyst can use `gpt-5.4-mini` through OpenAI without Domino AI Gateway.
+Set server-side `HMDA_LLM_PROVIDER=openai`, `HMDA_OPENAI_MODEL=gpt-5.4-mini`,
+and provide `OPENAI_API_KEY` as a runtime secret. The App/agent run in Domino;
+questions and aggregate evidence are sent to OpenAI for inference. No additional
+agent framework is required. See [setup and live verification](docs/OPENAI_ANALYST.md).
+Run `python scripts/check_analyst_connection.py` after configuring the key;
+configuration alone does not establish working model access. No live call was
+verified during implementation because no key was available.

@@ -158,7 +158,20 @@ def test_preprocessing_learns_only_training_values():
     with threadpool_limits(limits=2):
         model.fit(prepare_features(train), train.approved)
         model.predict_proba(prepare_features(heldout))
-    prep = model['preprocessor']
+    prep = model['preprocessor'].preprocessor
     assert prep.named_transformers_['numeric'].statistics_[1] == pd.to_numeric(train.income).median()
     assert '9999' not in prep.named_transformers_['categorical'].categories_[2]
     assert model['classifier'].early_stopping is False
+
+
+def test_fairness_supported_disparities_and_absent_denials():
+    d = source.validate(frame(2025, 300), 2025)
+    d['derived_race'] = ['A']*150 + ['B']*150
+    report = workflow.fairness(d, np.r_[np.ones(150), np.zeros(150)], .5)
+    gap = report['group_rate_gaps']['derived_race']['predicted_approval_rate']
+    assert gap == {'max_minus_min': 1., 'eligible_groups': 2}
+    assert all(not r['small_group'] for r in report['rows'] if r['field']=='derived_race')
+    d['approved'] = 1
+    report = workflow.fairness(d, np.ones(300), .5)
+    assert all(r['denial_recall'] is None and r['false_positive_rate'] is None for r in report['rows'])
+    assert all(r['small_group'] for r in report['rows'])
