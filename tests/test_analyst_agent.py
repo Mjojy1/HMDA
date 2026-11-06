@@ -1,7 +1,9 @@
 import json
+from contextlib import contextmanager
 import pytest
 from backend.analyst import Question, answer
 from backend.analyst_agent import run_agent
+from backend import tracing
 from test_data_service import fixture_service
 
 
@@ -26,6 +28,85 @@ def test_agent_observes_results_and_combines_tools(fixture_service):
     assert result['status']=='ok' and result['steps']==3
     assert len(result['evidence'])==2 and '3 sampled records' in result['answer']
     assert result['trace'][1]['tool']['name']=='definitions'
+    assert result['citations'][0]=={'evidence_id':'E1','tool':'overview','artifacts':['hmda_2025.parquet']}
+
+
+def test_fairness_execution_is_traced_and_cited(monkeypatch,fixture_service):
+    import pandas as pd
+    monkeypatch.delenv('HMDA_DISABLE_DOMINO_TRACING',raising=False)
+    fixture_service.report_dir.mkdir()
+    pd.DataFrame([
+        dict(race='A',applications=1,actual_denials=0,historical_approval_rate=1,predicted_approval_rate=1,denial_recall=None),
+        dict(race='Missing',applications=1,actual_denials=0,historical_approval_rate=1,predicted_approval_rate=1,denial_recall=None),
+        dict(race='B',applications=1,actual_denials=1,historical_approval_rate=0,predicted_approval_rate=0,denial_recall=1),
+    ]).to_csv(fixture_service.report_dir/'gradient_boosting_fairness_audit_2025.csv',index=False)
+
+    spans, root_outputs = [], []
+
+    class Span:
+        def __init__(self,name,span_type):
+            self.name,self.span_type=name,span_type
+            self.inputs,self.outputs={},{}
+        def set_inputs(self,value): self.inputs=value
+        def set_outputs(self,value): self.outputs=value
+
+    @contextmanager
+    def fake_span(name,span_type):
+        span=Span(name,span_type)
+        spans.append(span)
+        yield span
+
+    def fake_add_tracing(name,span_type):
+        assert name=='hmda_analyst_request' and span_type=='AGENT'
+        def decorate(function):
+            def invoke():
+                value=function()
+                root_outputs.append(value)
+                return value
+            return invoke
+        return decorate
+
+    monkeypatch.setattr(tracing,'_load_add_tracing',lambda:fake_add_tracing)
+    monkeypatch.setattr(tracing,'_start_span',fake_span)
+    calls=iter([
+        action('read_hmda',{'name':'fairness','year':2025}),
+        action('finish_analysis',{'evidence_ids':['E1'],'conclusion':'supported'},'call2'),
+    ])
+    result=run_agent(fixture_service,Question(message='For 2025, compare model evidence by demographic group.'),
+                     request=lambda *args:next(calls))
+
+    fairness_span=next(span for span in spans if span.name=='fairness')
+    expected_artifacts=['hmda_2025.parquet','gradient_boosting_fairness_audit_2025.csv']
+    assert fairness_span.span_type=='TOOL'
+    assert fairness_span.inputs=={'tool':'fairness','year':2025,'evidence_id':'E1'}
+    assert fairness_span.outputs=={'status':'ok','evidence_id':'E1','artifacts':expected_artifacts}
+    assert result['citations']==[{'evidence_id':'E1','tool':'fairness','artifacts':expected_artifacts}]
+    assert 'Saved-model race results' in result['answer']
+    assert 'Historical outcomes by ethnicity: unavailable.' in result['answer']
+    assert 'ethnicity/sex prediction-error metrics are unavailable' in result['answer']
+    assert root_outputs[0]['citations']==result['citations']
+    assert 'data' not in root_outputs[0]
+    assert 'derived_race' not in json.dumps(root_outputs[0])
+
+
+def test_missing_tracing_dependencies_fall_back(monkeypatch):
+    monkeypatch.delenv('HMDA_DISABLE_DOMINO_TRACING',raising=False)
+    monkeypatch.setattr(tracing,'_load_add_tracing',lambda:(_ for _ in ()).throw(ImportError()))
+    calls=[]
+    assert tracing.trace_agent_call(lambda:calls.append('ran') or {'status':'ok'})=={'status':'ok'}
+    assert calls==['ran']
+
+
+def test_unavailable_span_exporter_does_not_block_tool(monkeypatch):
+    monkeypatch.delenv('HMDA_DISABLE_DOMINO_TRACING',raising=False)
+    monkeypatch.setattr(tracing,'_start_span',lambda *args:(_ for _ in ()).throw(RuntimeError()))
+    token=tracing._TRACE_ACTIVE.set(True)
+    try:
+        with tracing.child_span('fairness','TOOL',{'year':2025}):
+            executed=True
+    finally:
+        tracing._TRACE_ACTIVE.reset(token)
+    assert executed
 
 
 @pytest.mark.parametrize('bad',[

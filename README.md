@@ -34,6 +34,8 @@ the UI explicitly labels the agent unavailable and offers basic single-tool look
 The agent observes tool results, chooses follow-up tools, and finishes with validated
 evidence citations; its activity trace is visible in the conversation. See
 [analyst configuration](docs/HANDOFF.md#analyst-configuration-and-boundaries).
+Domino MLflow tracing and the current Agent launch failure are documented in
+[the tracing handoff](docs/OPENAI_ANALYST.md#domino-tracing-and-deployment-handoff).
 
 On **2026-11-03**, the complete workflow ran locally on the mounted real HMDA
 sample and as Domino Job `6aea507a06b33052fec8cdfd`. Managed MLflow training run

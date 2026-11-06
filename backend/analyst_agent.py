@@ -7,6 +7,7 @@ from backend.analyst import ToolCall, gateway_request, execute_tool, render_evid
 from backend.config import TARGET_NOTE
 from backend.data_service import DataUnavailable
 from backend.llm_provider import openai_request, provider_status
+from backend.tracing import artifact_references, child_span, set_span_outputs, trace_agent_call
 
 MAX_STEPS = 6
 MAX_SECONDS = 110
@@ -42,6 +43,33 @@ supply narrative facts or computed metrics; the application renders cited eviden
 
 
 def run_agent(svc, question, request=None):
+    return trace_agent_call(lambda: _run_agent(svc, question, request))
+
+
+def _render_agent_evidence(tool, evidence, source):
+    summary = render_evidence(tool, evidence, source)['answer']
+    if tool.name != 'fairness':
+        return summary
+
+    def percent(value):
+        return 'undefined' if value is None else f'{value:.1%}'
+
+    summary += '\n\nSaved-model race results (predicted-positive rate; denial recall): ' + '; '.join(
+        f"{row['race']}: {percent(row['predicted_approval_rate'])}; {percent(row['denial_recall'])}"
+        for row in evidence['race_model_report'])
+    for field in ['derived_ethnicity', 'derived_sex']:
+        groups = [row for row in evidence['outcome_groups']
+                  if row['field'] == field and 'group' in row and 'approval_rate' in row]
+        label = field.removeprefix('derived_')
+        if groups:
+            summary += f'\n\nHistorical approval rates by {label}: ' + '; '.join(
+                f"{row['group']}: {percent(row['approval_rate'])}" for row in groups)
+        else:
+            summary += f'\n\nHistorical outcomes by {label}: unavailable.'
+    return summary + '\n\nSaved-model ethnicity/sex prediction-error metrics are unavailable.'
+
+
+def _run_agent(svc, question, request=None):
     provider = provider_status()
     if request is None:
         if provider['provider'] == 'openai':
@@ -62,10 +90,13 @@ def run_agent(svc, question, request=None):
         selected = [observations[i] for i in (ids or observations)]
         good = [x for x in selected if x['status'] == 'ok']
         summaries = [x['summary'] for x in good]
+        citations = [{'evidence_id': x['id'], 'tool': x['tool']['name'],
+                  'artifacts': x['artifacts']} for x in selected]
         lead = 'Analysis completed using the cited read-only tools.' if status == 'ok' else 'The available evidence is insufficient to complete this analysis.'
         return {'status': status, 'answer': '\n\n'.join([lead, *summaries]),
                 'mode': f"{provider['provider_label']} agent — bounded tool loop",
                 'evidence': selected, 'source': 'Cited API/artifact sources in each observation',
+            'citations': citations,
                 'trace': trace, 'steps': len(trace), 'target_note': TARGET_NOTE, 'limitations': LIMITATIONS}
 
     for step in range(MAX_STEPS):
@@ -73,11 +104,15 @@ def run_agent(svc, question, request=None):
             trace.append({'step': step+1, 'action': 'stop', 'status': 'budget_exhausted'})
             return result('incomplete')
         try:
-            message = request(messages, TOOLS)
-            call = message['tool_calls'][0]
-            if len(message['tool_calls']) != 1 or call['type'] != 'function' or not isinstance(call['id'], str):
-                raise ValueError('Malformed tool envelope')
-            function = call['function']
+            with child_span('llm_tool_selection', 'LLM', {
+                'provider': provider['provider'], 'step': step + 1,
+            }) as llm_span:
+                message = request(messages, TOOLS)
+                call = message['tool_calls'][0]
+                if len(message['tool_calls']) != 1 or call['type'] != 'function' or not isinstance(call['id'], str):
+                    raise ValueError('Malformed tool envelope')
+                function = call['function']
+                set_span_outputs(llm_span, {'status': 'ok', 'function': function.get('name')})
             name = function['name']
             if name == 'finish_analysis':
                 finish = Finish.model_validate_json(function['arguments'])
@@ -94,13 +129,27 @@ def run_agent(svc, question, request=None):
             if step == MAX_STEPS-1: raise ValueError('Tool budget exhausted; final step must finish')
             seen.add(key)
             eid = f'E{len(observations)+1}'
-            try:
-                evidence, source = execute_tool(svc, tool)
-                summary = render_evidence(tool, evidence, source)['answer']
-                observation = {'id': eid, 'status': 'ok', 'tool': tool.model_dump(),
-                               'source': source, 'summary': summary, 'data': evidence}
-            except DataUnavailable as exc:
-                observation = {'id': eid, 'status': 'unavailable', 'tool': tool.model_dump(), 'error': str(exc)}
+            artifacts = artifact_references(tool.name, tool.year)
+            with child_span(tool.name, 'TOOL', {
+                'tool': tool.name, 'year': tool.year, 'evidence_id': eid,
+            }) as tool_span:
+                try:
+                    evidence, source = execute_tool(svc, tool)
+                    summary = _render_agent_evidence(tool, evidence, source)
+                except DataUnavailable as exc:
+                    observation = {'id': eid, 'status': 'unavailable', 'tool': tool.model_dump(),
+                                   'error': str(exc), 'artifacts': artifacts}
+                    set_span_outputs(tool_span, {
+                        'status': 'unavailable', 'error_type': type(exc).__name__,
+                        'evidence_id': eid, 'artifacts': artifacts,
+                    })
+                else:
+                    observation = {'id': eid, 'status': 'ok', 'tool': tool.model_dump(),
+                                   'source': source, 'summary': summary, 'data': evidence,
+                                   'artifacts': artifacts}
+                    set_span_outputs(tool_span, {
+                        'status': 'ok', 'evidence_id': eid, 'artifacts': artifacts,
+                    })
             observations[eid] = observation
             trace.append({'step': step+1, 'action': name, 'tool': tool.model_dump(), 'status': observation['status'], 'evidence_id': eid})
             # Only validated tool calls and server-produced observations enter the next round.

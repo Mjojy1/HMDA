@@ -115,3 +115,93 @@ scikit-learn preprocessing-wrapper/dateutil deprecation warnings and the Vite bu
 advisory remain; they are not live inference failures. One existing leakage test was
 updated to inspect the wrapper's inner fitted transformer without weakening its assertions.
 No production model was retrained, Dataset artifact changed, commit pushed, or App deployed.
+
+## Domino tracing and deployment handoff
+
+Each configured agent request is wrapped in Domino's
+`@add_tracing(name="hmda_analyst_request", span_type="AGENT")`. It records the
+final server-rendered answer and evidence IDs/artifact names. Each HTTP provider
+round is a child `LLM` span, and each validated internal tool execution is a child
+`TOOL` span named `overview`, `trends`, `model`, `fairness`, or `definitions`.
+Tool spans record the year, evidence ID, status and repository-relative artifact
+names only. No raw question, LLM request/response payload, authorization header,
+or full aggregate tool payload is recorded. The final aggregate answer and its
+citations are intentionally attached to the parent span. Domino's Agent guidance
+uses `@add_tracing` for production requests; `DominoAgentContext` is for Agent
+development/evaluation Jobs that create versioned Agent runs. Do not wrap
+production requests in `DominoRun` or call `mlflow.set_experiment()`. The existing
+provider uses `requests`, so OpenAI SDK autologging would not observe its HTTP
+calls; each selection round is traced explicitly. Tracing is optional at runtime
+and failures do not break a working analytics request.
+
+For the Agent Compute Environment, install the pinned trace dependencies
+alongside the backend dependencies:
+
+```bash
+pip install -r backend/requirements.txt -r backend/tracing-requirements.txt
+```
+
+The Domino tracing setup guide specifies MLflow 3.2.0 and
+`dominodatalab[data,agents]==2.2.0`; those are pinned separately so the existing
+training workflow can retain its independently verified MLflow 3.3.2 pin. This
+Workspace has MLflow 3.3.2 and Domino SDK 2.2.0 installed; a synthetic local trace
+produced an `AGENT` root with a `fairness` `TOOL` child. That verifies local API
+compatibility only, not the deployed Agent Performance destination.
+
+### Verified Domino records
+
+The read-only Apps API showed two separate deployments in this project:
+
+- `GPT agent` (`AISYSTEM`, version 1) points to `backend/analyst_agent.py`.
+- `HMDA Mortgage Intelligence` (`STANDARD`, version 2) points to `./preview.sh`.
+
+The GPT agent instance is **Failed**. Its runtime log confirms the launch command
+`./backend/analyst_agent.py` and the failure:
+`ModuleNotFoundError: No module named 'backend'` at its import of
+`backend.analyst`. The module is an internal helper, requires a `DataService` and
+`Question`, and has no standalone server/CLI entry point. This confirms the
+selected file is not a valid deployment entry point; the import error is the
+immediate failure cause.
+
+Domino's Agent documentation says production Agents are deployed as web apps and
+the Agent deployment wizard takes a version entrypoint. For this project's
+dedicated `AISYSTEM` Agent, set the version's `content.entryScript` to
+`./preview.sh`. It prepares validated fairness/evaluation reports from the
+read-only HMDA Dataset, then execs `./app.sh`, which starts
+`python -m uvicorn backend.main:app --host 0.0.0.0 --port "${PORT:-8888}"`. Keep
+the existing Python 3.12 environment, Dataset mount and `small-k8s` tier; the
+environment revision is healthy and the Workspace reports the pinned Domino
+tracing SDK available. This creates a new Agent version and preserves failed v1
+for rollback. The separate `STANDARD` App record remains on `./preview.sh`; do
+not change or redeploy it for this task.
+
+The correct documented Apps beta instance-log route returned the failure above.
+No commit, push, Agent update, or deployed Performance trace was performed; the
+tracing code is currently only in the Workspace. The standard App was not
+updated. A real visible deployed Agent trace remains the release gate.
+
+### Demo prompts and expected evidence
+
+For the normal outcome path, ask:
+
+> Show aggregate outcomes for 2025.
+
+Expected internal tool: `overview`; expected citation artifact: `hmda_2025.parquet`.
+
+For the fairness trace, ask:
+
+> For the 2025 cohort, report the saved model's denial recall and predicted-positive rate by race, summarize historical outcome rates by ethnicity and sex, state that ethnicity/sex model error rates are unavailable, and cite the fairness evidence.
+
+Expected internal tool: `fairness`; the result reads 2025 aggregate outcomes across
+race, ethnicity and sex, plus the validated race-only saved-model report. Expected
+evidence ID is `E1` for the first read; its trace citation names
+`hmda_2025.parquet` and `gradient_boosting_fairness_audit_2025.csv`. The existing
+model artifact does not provide ethnicity/sex prediction-error metrics; do not
+describe those outcome-only groups as model fairness/error results.
+
+After updating the dedicated Agent from the traced revision, open
+**Domino → Deployments → Apps & Agents → GPT agent → Performance**, select the latest request trace, expand
+`hmda_analyst_request`, then expand `fairness`. The tool span should show its
+`TOOL` type, `year: 2025`, `evidence_id: E1`, success status and both artifact names;
+the parent output should show the deterministic answer and matching citation.
+Workspace checks and a synthetic local trace do not replace this deployed verification.
