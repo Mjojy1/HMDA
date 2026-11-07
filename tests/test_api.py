@@ -29,3 +29,40 @@ def test_docs_use_relative_openapi_url(fixture_service):
     c=TestClient(create_app(fixture_service))
     assert "url: './openapi.json'" in c.get('/api/docs').text
     assert c.get('/api/openapi.json').status_code==200
+
+def test_analyst_proxy_forwards_status_and_question(monkeypatch,fixture_service):
+    import backend.main as main
+    monkeypatch.setenv('HMDA_ANALYST_AGENT_URL','https://domino.example/apps-internal/agent-123')
+    class Response:
+        text='platform-token'
+        def __init__(self,data=None): self.data=data
+        def raise_for_status(self): pass
+        def json(self): return self.data
+    requests=[]
+    monkeypatch.setattr(main.requests,'get',lambda url,**kwargs: Response() if url=='http://localhost:8899/access-token' else Response({'provider':'openai','agent_available':True}))
+    def post(url,**kwargs):
+        requests.append((url,kwargs))
+        return Response({'status':'ok','trace':[{'action':'read_hmda'}]})
+    monkeypatch.setattr(main.requests,'post',post)
+    c=TestClient(create_app(fixture_service))
+    assert c.get('/api/analyst/status').json()['agent_available'] is True
+    result=c.post('/api/analyst',json={'message':'Show aggregate outcomes for 2025','history':['Earlier question']})
+    assert result.status_code==200 and result.json()['status']=='ok'
+    url,kwargs=requests[0]
+    assert url=='https://domino.example/apps-internal/agent-123/api/analyst'
+    assert kwargs['headers']['Authorization']=='Bearer platform-token'
+    assert kwargs['json']=={'message':'Show aggregate outcomes for 2025','history':['Earlier question']}
+
+def test_analyst_proxy_fails_visibly_without_falling_back(monkeypatch,fixture_service):
+    import backend.main as main
+    import requests as http_requests
+    monkeypatch.setenv('HMDA_ANALYST_AGENT_URL','https://domino.example/apps-internal/agent-123')
+    class TokenResponse:
+        text='platform-token'
+        def raise_for_status(self): pass
+    monkeypatch.setattr(main.requests,'get',lambda *args,**kwargs: TokenResponse())
+    def unavailable(*args,**kwargs): raise http_requests.ConnectionError('unavailable')
+    monkeypatch.setattr(main.requests,'post',unavailable)
+    result=TestClient(create_app(fixture_service)).post('/api/analyst',json={'message':'Show aggregate outcomes for 2025'})
+    assert result.status_code==503
+    assert result.json()['error']['message']=='Connected GPT Agent is unavailable. Retry later.'

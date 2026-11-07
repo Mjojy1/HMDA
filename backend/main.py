@@ -1,7 +1,10 @@
 import os
 import platform
+import re
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
+import requests
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,6 +14,32 @@ from backend.config import ROOT, FEATURES, TARGET_NOTE
 from backend.data_service import DataService, DataUnavailable
 from backend.analyst import Question, ToolCall, answer, execute_tool
 from backend.llm_provider import provider_status
+
+
+def _request_agent(path, question=None):
+    agent_url = os.getenv('HMDA_ANALYST_AGENT_URL')
+    if not agent_url:
+        return None
+    parsed = urlsplit(agent_url)
+    if parsed.scheme != 'https' or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or not re.fullmatch(r'/apps-internal/[A-Za-z0-9_-]+/?', parsed.path):
+        raise DataUnavailable('Connected GPT Agent configuration is invalid.')
+    url = f'{agent_url.rstrip("/")}/{path.lstrip("/")}'
+    try:
+        token_response = requests.get('http://localhost:8899/access-token', timeout=5)
+        token_response.raise_for_status()
+        token = token_response.text.strip()
+        if not token:
+            raise requests.RequestException('Empty Domino access token')
+        headers = {'Authorization': f'Bearer {token}'}
+        if question is None:
+            response = requests.get(url, headers=headers, timeout=15, allow_redirects=False)
+        else:
+            headers['Content-Type'] = 'application/json'
+            response = requests.post(url, headers=headers, json=question.model_dump(), timeout=150, allow_redirects=False)
+        response.raise_for_status()
+        return response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise DataUnavailable('Connected GPT Agent is unavailable. Retry later.') from exc
 
 
 def create_app(service=None):
@@ -50,10 +79,14 @@ def create_app(service=None):
 
     @app.get('/api/analyst/status')
     def analyst_status():
+        if os.getenv('HMDA_ANALYST_AGENT_URL'):
+            return _request_agent('api/analyst/status')
         return {'available': True, **provider_status(), 'max_steps': 6, 'read_only': True}
 
     @app.post('/api/analyst')
     def analyst(question: Question):
+        if os.getenv('HMDA_ANALYST_AGENT_URL'):
+            return _request_agent('api/analyst', question)
         return answer(svc, question)
 
     @app.get('/api/overview')
