@@ -1,7 +1,7 @@
 import json
 from contextlib import contextmanager
 import pytest
-from backend.analyst import Question, answer
+from backend.analyst import Question, ToolCall, answer
 from backend.analyst_agent import run_agent
 from backend import tracing
 from test_data_service import fixture_service
@@ -87,6 +87,32 @@ def test_fairness_execution_is_traced_and_cited(monkeypatch,fixture_service):
     assert root_outputs[0]['citations']==result['citations']
     assert 'data' not in root_outputs[0]
     assert 'derived_race' not in json.dumps(root_outputs[0])
+
+
+def test_agent_renders_sex_and_ethnicity_model_evidence(monkeypatch):
+    from backend import analyst_agent
+    monkeypatch.setattr(analyst_agent, 'render_evidence', lambda *args: {'answer': 'Base fairness summary.'})
+    evidence = {
+        'race_model_report': [],
+        'outcome_groups': [],
+        'demographic_model_reports': {
+            'sex': {'available': True, 'rows': [
+                {'group': 'Female', 'applications': 200, 'predicted_approval_rate': 0.7,
+                 'denial_recall': 0.4, 'approval_recall': 0.9},
+            ]},
+            'ethnicity': {'available': True, 'rows': [
+                {'group': 'Hispanic or Latino', 'applications': 180, 'predicted_approval_rate': 0.6,
+                 'denial_recall': 0.3, 'approval_recall': 0.8},
+            ]},
+        },
+    }
+
+    answer = analyst_agent._render_agent_evidence(ToolCall(name='fairness'), evidence, 'test')
+
+    assert 'Female: n=200; 70.0%; 40.0%; 90.0%' in answer
+    assert 'Hispanic or Latino: n=180; 60.0%; 30.0%; 80.0%' in answer
+    assert 'prediction-error metrics are unavailable' not in answer
+    assert 'Joint categories are included' in answer
 
 
 def test_missing_tracing_dependencies_fall_back(monkeypatch):

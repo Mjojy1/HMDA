@@ -235,3 +235,13 @@ class DataService:
         except (KeyError, ValueError, TypeError, OSError) as exc:
             raise DataUnavailable('Evaluation report is invalid or stale. Validate against the saved model and test Dataset.') from exc
         return report
+
+
+    @cached_property
+    def demographic_fairness(self):
+        from backend.demographic_fairness import REPORT, validate
+        report = self.json_file(self.report_path(REPORT))
+        try:
+            return validate(report, self.data[self.data.year.eq(2025)], self.evaluation)
+        except (KeyError, ValueError, TypeError, IndexError) as exc:
+            raise DataUnavailable('Demographic report is invalid or stale. Regenerate reports from the saved model.') from exc

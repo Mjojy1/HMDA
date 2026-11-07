@@ -19,6 +19,31 @@ def test_analytics(fixture_service):
     assert c.get('/api/fairness?min_samples=-1').status_code==422
     assert c.get('/api/overview?year=bad').status_code==422
 
+def test_fairness_demographic_views(fixture_service):
+    dimensions = ['race', 'sex', 'ethnicity']
+    fixture_service.__dict__['metrics'] = [{}, {'test_year': 2025, 'threshold': 0.5}]
+    fixture_service.__dict__['demographic_fairness'] = {
+        dimension: {'available': True, 'rows': [
+            {'group': dimension, 'applications': 120},
+            {'group': 'Small group', 'applications': 20},
+        ]}
+        for dimension in dimensions
+    }
+    client = TestClient(create_app(fixture_service))
+
+    for dimension in dimensions:
+        response = client.get(f'/api/fairness?dimension={dimension}&min_samples=100')
+        assert response.status_code == 200
+        body = response.json()
+        assert body['dimension'] == dimension
+        assert [row['group'] for row in body['rows']] == [dimension]
+        assert body['excluded_groups'] == 1
+
+    fixture_service.__dict__['demographic_fairness']['ethnicity'] = {'available': False, 'rows': []}
+    response = client.get('/api/fairness?dimension=ethnicity')
+    assert response.status_code == 503
+    assert 'Ethnicity is unavailable' in response.json()['error']['message']
+
 def test_lineage_counts_missing_categorical(fixture_service):
     c=TestClient(create_app(fixture_service))
     quality={x['field']:x for x in c.get('/api/lineage').json()['quality']}

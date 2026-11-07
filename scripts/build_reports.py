@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score, accuracy_score, balanced_accuracy_score, recall_score, confusion_matrix
 from threadpoolctl import threadpool_limits
+from backend.demographic_fairness import evaluate as demographic_evaluate, REPORT as DEMOGRAPHIC_REPORT
 from backend.config import DATA_DIR, REPORT_DIR, FEATURES, TARGET_NOTE
 from backend.data_service import DataService, prepare_features
 
@@ -43,7 +44,7 @@ def build(data_dir=DATA_DIR, output=REPORT_DIR):
     out.mkdir(parents=True, exist_ok=True)
     audit_path = out / 'gradient_boosting_fairness_audit_2025.csv'
     evaluation_path = out / 'gradient_boosting_evaluation_2025.json'
-    if audit_path.exists() or evaluation_path.exists():
+    if audit_path.exists() or evaluation_path.exists() or (out / DEMOGRAPHIC_REPORT).exists():
         raise FileExistsError('Output exists. Choose a new --output directory; existing reports are never overwritten.')
     evaluation = dict(test_metrics=scores, confusion_matrix=confusion_matrix(y,prediction,labels=[0,1]).tolist(),
                       labels=['Denied', 'Positive (actions 1 + 2)'], threshold=metadata['threshold'],
@@ -52,6 +53,9 @@ def build(data_dir=DATA_DIR, output=REPORT_DIR):
                       target_note=TARGET_NOTE, python=platform.python_version())
     pd.DataFrame(rows).to_csv(audit_path,index=False,mode='x')
     with evaluation_path.open('x') as f: json.dump(evaluation,f,indent=2,allow_nan=False)
+    demographic = {key: evaluation[key] for key in ['model_sha256', 'data_sha256', 'threshold']}
+    demographic['dimensions'] = demographic_evaluate(d, prediction)
+    with (out / DEMOGRAPHIC_REPORT).open('x') as f: json.dump(demographic, f, indent=2, allow_nan=False)
     # Generate importance only if absent; use the notebook's validation-year recipe.
     if not (Path(data_dir)/'reports/gradient_boosting_permutation_importance.csv').exists():
         from sklearn.inspection import permutation_importance

@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 import platform
 import re
 import subprocess
@@ -115,7 +116,16 @@ def create_app(service=None):
     def importance(): return svc.importance
 
     @app.get('/api/fairness')
-    def fairness(min_samples: int=Query(100,ge=0,le=1000000)):
+    def fairness(min_samples: int=Query(100,ge=0,le=1000000), dimension: Literal['race','sex','ethnicity']|None=None):
+        if dimension is not None:
+            from backend.demographic_fairness import REPORT
+            entry = svc.demographic_fairness[dimension]
+            if not entry['available']:
+                raise DataUnavailable(f'{dimension.title()} is unavailable in the mounted 2025 sample.')
+            rows = [r for r in entry['rows'] if r['applications'] >= min_samples]
+            return {'dimension':dimension, 'rows':rows, 'excluded_groups':len(entry['rows'])-len(rows),
+                    'source':str(svc.report_path(REPORT)), 'target_note':TARGET_NOTE, 'model':svc.metrics[1]}
+
         # Origination is recomputed from action 1, never relabeled from the saved positive target.
         d = svc.data[svc.data.year.eq(2025)]
         origin = d.groupby('derived_race').action_taken.apply(lambda x: float(x.eq(1).mean())).to_dict()

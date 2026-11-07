@@ -66,6 +66,16 @@ def _render_agent_evidence(tool, evidence, source):
                 f"{row['group']}: {percent(row['approval_rate'])}" for row in groups)
         else:
             summary += f'\n\nHistorical outcomes by {label}: unavailable.'
+    reports = evidence.get('demographic_model_reports')
+    if reports:
+        for dimension in ['sex', 'ethnicity']:
+            entry = reports[dimension]
+            if not entry['available']:
+                summary += f'\n\nSaved-model {dimension} results: unavailable.'
+                continue
+            summary += f'\n\nSaved-model {dimension} results (records; predicted approval rate; denial recall; approval recall): ' + '; '.join(
+                f"{r['group']}: n={r['applications']}; {percent(r['predicted_approval_rate'])}; {percent(r['denial_recall'])}; {percent(r['approval_recall'])}" for r in entry['rows'])
+        return summary + '\n\nJoint categories are included in tool evidence but excluded from the customer chart. Small groups have limited support.'
     return summary + '\n\nSaved-model ethnicity/sex prediction-error metrics are unavailable.'
 
 

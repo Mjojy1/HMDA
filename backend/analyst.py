@@ -114,10 +114,13 @@ def execute_tool(svc, call):
                     'approval_rate': float(subset.approved.mean()),
                     'small_group': n < 100 or denials < 30 or n-denials < 30,
                     'unavailable': group in {'Missing', 'Race Not Available', 'Ethnicity Not Available', 'Sex Not Available', 'Free Form Text Only'}})
+        from backend.demographic_fairness import REPORT
+        demographic = svc.demographic_fairness if svc.report_path(REPORT).is_file() else None
         return {'race_model_report': svc.fairness, 'outcome_groups': outcomes,
-                'prediction_coverage': 'Saved app report supplies race prediction rates and denial recall only. '
+                'demographic_model_reports': demographic,
+                'prediction_coverage': ('Validated saved-model reports cover available race, sex and ethnicity groups. Joint remains in tool evidence but is excluded from the customer chart.' if demographic else 'Saved app report supplies race prediction rates and denial recall only. '
                 'Ethnicity/sex prediction errors and full disparity summaries are unavailable for this saved model; '
-                'new training runs retain all three in reports/fairness_2025.json. Do not mix models.',
+                'new training runs retain all three in reports/fairness_2025.json. Do not mix models.'),
                 'undefined_rates': 'null for zero denominators'}, '/api/fairness and mounted 2025 aggregate outcomes'
     raise DataUnavailable('Insufficient information or unsupported question. Ask about aggregate outcomes, trends, saved model metrics, fairness groups, or metric definitions.')
 
