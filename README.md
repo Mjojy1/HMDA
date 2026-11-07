@@ -160,7 +160,7 @@ Group comparisons are unadjusted descriptive statistics, not discrimination find
 ## Files
 
 - `backend/`: read-only services, schemas, API, pinned dependencies.
-- `frontend/`: five-page responsive React dashboard and lockfile.
+- `frontend/`: six-page responsive React application and lockfile.
 - `scripts/`: artifact validation and deterministic offline evaluation/report generation.
 - `tests/`: temporary-fixture API and service tests.
 - `app.sh`: single-process Domino entry point.
@@ -178,7 +178,7 @@ PLAYWRIGHT_BROWSERS_PATH=/tmp/hmda-browsers python -m playwright install chromiu
 PLAYWRIGHT_BROWSERS_PATH=/tmp/hmda-browsers python -m scripts.browser_smoke
 ```
 
-The browser script checks the five pages, year and fairness filters, mobile layout/navigation, JavaScript errors, and prefix-preserving assets/API requests via a simulated prefix-stripping proxy. Screenshots go to ignored `outputs/screenshots/`. This simulation does not establish that a deployed Domino App can access its Dataset.
+The browser script checks all six pages, model tabs, contextual analyst open/close, analyst evidence/refusal, year and fairness filters, mobile layout/navigation, JavaScript errors, and prefix-preserving assets/API requests via a simulated prefix-stripping proxy. Screenshots go to ignored `outputs/screenshots/`. This simulation does not establish that a deployed Domino App can access its Dataset.
 
 The production bundle currently emits Vite's size advisory (about 571 kB JavaScript / 165 kB gzip, including charts). It builds successfully; route-level splitting is a possible future optimization. The initial shared Python environment had dependency conflicts. MLflow was subsequently verified for the retrospective comparison. Use the documented pinned requirements and a versioned Compute Environment for reproducible workloads rather than assuming all workspace packages transfer to a fresh runtime.
 
@@ -329,3 +329,34 @@ agent framework is required. See [setup and live verification](docs/OPENAI_ANALY
 Run `python scripts/check_analyst_connection.py` after configuring the key;
 configuration alone does not establish working model access. No live call was
 verified during implementation because no key was available.
+
+
+### Guided analysis redesign (2026-11-07)
+
+Implemented the selected second concept from the latest mockup set (05 Guided
+analysis). The six existing routes now share horizontal navigation, restrained
+colors, flat sections, and inline statistics. Model performance opens with a
+plain-language finding calculated from saved metrics, followed by two comparison
+bars and expandable definitions. Evaluation details retain the original model
+comparison, importance, confusion matrix, and temporal limitations. Methodology
+is a separate tab. Tabs support arrow keys, Home and End.
+
+The contextual analyst opens beside the model view and is available from other
+research pages. On smaller screens it opens as a closable overlay; Escape closes
+it. It uses the existing analyst API, reports actual configuration status, and
+keeps supporting evidence and tool activity expandable. Page filters are not
+silently injected into questions. The mockup's illustrative conversation is not
+included as a real response. The standalone Analyst route remains available.
+
+Verification: 111 Python tests passed; TypeScript and Vite production build
+passed (bundle-size advisory remains); browser checks passed on all six routes
+at desktop and mobile sizes, including model tabs, analyst evidence/refusal,
+filters and simulated proxy-prefix routing. No browser JavaScript errors or
+failed responses occurred. Browser verification explicitly used
+`HMDA_LLM_PROVIDER=local`, so it does not establish live provider connectivity
+and did not make paid inference calls. Screenshots are retained under
+`outputs/screenshots/guided-analysis/` (ignored local artifacts).
+
+The local production bundle has been rebuilt. Open **Model performance**
+(`#model`) to review the selected direction. No backend APIs, Dataset files or
+model artifacts changed, and no Domino App was published or deployed.
