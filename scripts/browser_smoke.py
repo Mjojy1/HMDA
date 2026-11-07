@@ -60,6 +60,10 @@ with sync_playwright() as p:
     page.get_by_label('Minimum group size').select_option('0')
     page.wait_for_load_state('networkidle')
     expect(page.locator('main')).to_contain_text('Free Form Text Only')
+    expect(page.get_by_role('img',name='Historical approval rate, Model-predicted approval rate',exact=True)).to_be_visible()
+    expect(page.locator('table td').filter(has_text='Joint')).to_have_count(0)
+    expect(page.locator('.recharts-bar')).to_have_count(2)
+    expect(page.locator('main')).to_contain_text('Joint category is excluded')
     for route in ['overview','lending','model','fairness','lineage','analyst']:
         page.set_viewport_size({'width':390,'height':844})
         page.goto(base+'#'+route);page.wait_for_load_state('networkidle')

@@ -360,3 +360,11 @@ and did not make paid inference calls. Screenshots are retained under
 The local production bundle has been rebuilt. Open **Model performance**
 (`#model`) to review the selected direction. No backend APIs, Dataset files or
 model artifacts changed, and no Domino App was published or deployed.
+
+Fairness comparison refinement: the customer chart compares historical approval
+rate with model-predicted approval rate, using blue and orange. Historical
+approval includes originated loans and approvals not accepted; it is not loan
+creation. The Joint category is excluded only from this page's chart, support
+table, displayed count and approval-rate spread. Underlying records, model
+artifacts and API responses remain intact. The spread uses displayed named groups
+with at least 100 records and is undefined with fewer than two eligible groups.
