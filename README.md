@@ -160,7 +160,7 @@ Group comparisons are unadjusted descriptive statistics, not discrimination find
 ## Files
 
 - `backend/`: read-only services, schemas, API, pinned dependencies.
-- `frontend/`: six-page responsive React application and lockfile.
+- `frontend/`: four-page responsive React application and lockfile.
 - `scripts/`: artifact validation and deterministic offline evaluation/report generation.
 - `tests/`: temporary-fixture API and service tests.
 - `app.sh`: single-process Domino entry point.
@@ -178,7 +178,7 @@ PLAYWRIGHT_BROWSERS_PATH=/tmp/hmda-browsers python -m playwright install chromiu
 PLAYWRIGHT_BROWSERS_PATH=/tmp/hmda-browsers python -m scripts.browser_smoke
 ```
 
-The browser script checks all six pages, model tabs, contextual analyst open/close, analyst evidence/refusal, year and fairness filters, mobile layout/navigation, JavaScript errors, and prefix-preserving assets/API requests via a simulated prefix-stripping proxy. Screenshots go to ignored `outputs/screenshots/`. This simulation does not establish that a deployed Domino App can access its Dataset.
+The browser script checks all four pages, fictional classifier submission, model tabs, contextual analyst open/close, predictor selectors, loan-type labels, demographic ordering, year and fairness filters, mobile layout/navigation, JavaScript errors, and prefix-preserving assets/API requests via a simulated prefix-stripping proxy. Screenshots go to ignored `outputs/screenshots/`. This simulation does not establish that a deployed Domino App can access its Dataset.
 
 The production bundle currently emits Vite's size advisory (about 571 kB JavaScript / 165 kB gzip, including charts). It builds successfully; route-level splitting is a possible future optimization. The initial shared Python environment had dependency conflicts. MLflow was subsequently verified for the retrospective comparison. Use the documented pinned requirements and a versioned Compute Environment for reproducible workloads rather than assuming all workspace packages transfer to a fresh runtime.
 
@@ -368,3 +368,11 @@ creation. The Joint category is excluded only from this page's chart, support
 table, displayed count and approval-rate spread. Underlying records, model
 artifacts and API responses remain intact. The spread uses displayed named groups
 with at least 100 records and is undefined with fewer than two eligible groups.
+
+### Four-page preview and fictional classifier
+
+Navigation contains Overview, Model Classifier, Fairness, and Analyst. Overview combines filtered lending trends with two selectable predictor distributions; sources and methodology are expandable within Overview. Loan types use descriptive labels. Unavailable demographic groups appear after named groups.
+
+The Model Classifier is a presentation-only fictional-scenario demo. `POST /api/classifier-demo` accepts the six existing features and an explicit fictional-scenario acknowledgment, runs the trusted saved gradient boosting pipeline after evaluation hash validation, and applies its saved threshold. Income is in thousands of USD; loan amount is USD; term is months. The positive-class score is uncalibrated and must not be interpreted as a person's probability of receiving a loan. No training, Dataset edits, or input persistence are performed by this endpoint. Unknown fields (including identifiers) are rejected. This adds inference to the app; it is not an underwriting service.
+
+Preview locally with `PORT=8889 bash preview.sh`. Test with `HMDA_TEST_URL=http://127.0.0.1:8889/ .venv/bin/python scripts/browser_smoke.py`. Publishing is a separate review step.

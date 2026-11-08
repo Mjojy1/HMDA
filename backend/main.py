@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 import requests
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Query, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -15,6 +15,7 @@ from backend.config import ROOT, FEATURES, TARGET_NOTE
 from backend.data_service import DataService, DataUnavailable
 from backend.analyst import Question, ToolCall, answer, execute_tool
 from backend.llm_provider import provider_status
+from backend.classifier_demo import ClassifierDemo, Scenario, DTI
 
 
 def _request_agent(path, question=None):
@@ -46,6 +47,7 @@ def _request_agent(path, question=None):
 def create_app(service=None):
     app = FastAPI(title='HMDA Mortgage Intelligence', docs_url=None, redoc_url=None, openapi_url='/api/openapi.json')
     svc = service or DataService()
+    demo = ClassifierDemo(svc)
     origins = os.getenv('HMDA_CORS_ORIGINS','').split(',')
     if origins != ['']:
         app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=['GET', 'POST'], allow_headers=['Accept', 'Content-Type'])
@@ -57,6 +59,17 @@ def create_app(service=None):
     @app.get('/api/docs', include_in_schema=False)
     def docs():
         return get_swagger_ui_html(openapi_url='./openapi.json', title=app.title)
+
+    @app.get('/api/classifier-demo/options')
+    def demo_options():
+        return {'debt_to_income_ratio': DTI}
+
+    @app.post('/api/classifier-demo')
+    def classifier_demo(scenario: Scenario):
+        try:
+            return demo.predict(scenario)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get('/api/health')
     def health(): return {'status':'alive'}

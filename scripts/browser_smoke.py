@@ -8,7 +8,7 @@ output=Path(os.getenv('HMDA_SCREENSHOT_DIR','outputs/screenshots'));output.mkdir
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True,args=['--no-sandbox'])
     page=browser.new_page(viewport={'width':1440,'height':1000},device_scale_factor=1,reduced_motion='reduce')
-    titles={'analyst':'Ask the analyst','overview':'Understand the lending picture','lending':'Explore lending trends','model':'Understand model performance','fairness':'Review group outcomes','lineage':'Follow the evidence'}
+    titles={'analyst':'Ask the analyst','overview':'Understand the lending picture','model':'Explore the model classifier','fairness':'Review group outcomes'}
     errors=[]
     failed_responses=[]
     if os.getenv('HMDA_TEST_DOMINO_AUTH')=='1':
@@ -24,7 +24,7 @@ with sync_playwright() as p:
     page.on('console',lambda msg: errors.append(msg.text) if msg.type=='error' else None)
     page.on('response',lambda response: failed_responses.append((response.url,response.status)) if response.status>=400 else None)
     page.on('pageerror',lambda e: errors.append(str(e)))
-    for route in ['overview','lending','model','fairness','lineage','analyst']:
+    for route in ['overview','model','fairness','analyst']:
         page.goto(base+'#'+route)
         page.wait_for_load_state('networkidle')
         expect(page.locator('h1')).to_have_text(titles[route])
@@ -33,26 +33,27 @@ with sync_playwright() as p:
         page.screenshot(path=str(output/f'{route}.png'),full_page=True)
         print('Rendered',route)
     page.goto(base+'#model');page.wait_for_load_state('networkidle')
-    expect(page.get_by_label('Contextual analyst')).to_be_visible()
+    expect(page.get_by_label('Contextual analyst')).to_have_count(0)
+    page.get_by_label('These are fictional inputs for a test demonstration.').check()
+    page.get_by_role('button',name='Classify test scenario').click()
+    expect(page.get_by_text('Predicted historical class:',exact=False)).to_be_visible()
+    expect(page.locator('main')).to_contain_text('Uncalibrated score')
     page.get_by_role('tab',name='Evaluation details').click()
     expect(page.locator('main')).to_contain_text('confusion matrix')
     page.get_by_role('tab',name='Methodology',exact=True).click()
     expect(page.locator('main')).to_contain_text('2021')
     page.get_by_role('tab',name='Summary',exact=True).click()
-    page.get_by_role('button',name='Close analyst',exact=True).click()
-    expect(page.get_by_label('Contextual analyst')).to_have_count(0)
     page.get_by_role('button',name='Ask analyst',exact=True).click()
     expect(page.get_by_label('Contextual analyst')).to_be_visible()
     page.keyboard.press('Escape')
     expect(page.get_by_label('Contextual analyst')).to_have_count(0)
     page.goto(base+'#analyst');page.wait_for_load_state('networkidle')
-    page.get_by_role('button',name='Show aggregate outcomes for 2025',exact=True).click()
-    expect(page.locator('.analyst-turn')).to_contain_text('25,000')
-    expect(page.locator('.analyst-turn')).to_contain_text('approval (actions 1+2)')
-    page.get_by_label('Your aggregate question').fill('Score applicant Jane')
-    page.get_by_role('button',name='Ask analyst',exact=True).click()
-    expect(page.locator('.analyst-turn').last).to_contain_text('cannot score applicants')
-    page.goto(base+'#lending');page.wait_for_load_state('networkidle')
+    page.goto(base+'#overview');page.wait_for_load_state('networkidle')
+    expect(page.locator('.primary-nav a')).to_have_count(4)
+    expect(page.locator('.scroll-chart')).to_have_count(2)
+    expect(page.get_by_label('loan_type',exact=True).locator('option[value="1"]')).to_have_text('Conventional')
+    page.get_by_label('Predictor 2',exact=True).select_option('loan_type')
+    expect(page.locator('.scroll-chart').last).to_contain_text('Conventional')
     page.get_by_label('year',exact=True).select_option('2025')
     page.wait_for_load_state('networkidle')
     expect(page.locator('main')).to_contain_text('25,000')
@@ -62,9 +63,13 @@ with sync_playwright() as p:
     expect(page.locator('main')).to_contain_text('Free Form Text Only')
     expect(page.get_by_role('img',name='Historical approval rate, Model-predicted approval rate',exact=True)).to_be_visible()
     expect(page.locator('table td').filter(has_text='Joint')).to_have_count(0)
+    groups=page.locator('tbody tr td:first-child').all_text_contents()
+    missing={'Missing','Race Not Available','Sex Not Available','Ethnicity Not Available','Free Form Text Only'}
+    flags=[g in missing for g in groups]
+    assert flags==sorted(flags),groups
     expect(page.locator('.recharts-bar')).to_have_count(2)
     expect(page.locator('main')).to_contain_text('Joint category is excluded')
-    for route in ['overview','lending','model','fairness','lineage','analyst']:
+    for route in ['overview','model','fairness','analyst']:
         page.set_viewport_size({'width':390,'height':844})
         page.goto(base+'#'+route);page.wait_for_load_state('networkidle')
         expect(page.locator('h1')).to_have_text(titles[route])
@@ -94,4 +99,4 @@ with sync_playwright() as p:
     assert not failed_responses,failed_responses
     assert not errors,errors
     browser.close()
-print('All six pages, analyst evidence/refusal, filters and mobile navigation passed; no JavaScript errors.')
+print('All four pages, predictor selection, loan labels, fairness ordering, filters and mobile navigation passed; no JavaScript errors.')
