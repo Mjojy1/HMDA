@@ -36,7 +36,7 @@ export function Classifier(){
 function DemographicContext({dimension}:{dimension:string}){
  const evidence=useApi(`fairness?dimension=${dimension}&min_samples=0`)
  const [selected,setSelected]=useState('')
- const rows=evidence.data?.rows||[]
+ const rows=(evidence.data?.rows||[]).filter((r:any)=>!['Joint','Free Form Text Only'].includes(r.group))
  const row=rows.find((r:any)=>r.group===selected)
  const title=dimension.charAt(0).toUpperCase()+dimension.slice(1)
  return <div><State request={evidence}><label>{title} (optional)<select aria-label={`${title} (optional)`} value={selected} onChange={event=>setSelected(event.target.value)}><option value="">Not selected</option>{rows.map((r:any)=><option key={r.group} value={r.group}>{r.group}</option>)}</select></label>

@@ -43,7 +43,9 @@ with sync_playwright() as p:
         page.get_by_role('button',name='Classify test scenario').click()
     expect(page.get_by_text('Predicted historical class:',exact=False)).to_be_visible()
     for dimension in ['Race','Sex','Ethnicity']:
-        page.get_by_label(dimension+' (optional)',exact=True).select_option(index=1)
+        selector=page.get_by_label(dimension+' (optional)',exact=True)
+        assert not {'Joint','Free Form Text Only'}.intersection(selector.locator('option').all_text_contents())
+        selector.select_option(index=1)
     expect(page.locator('[role=status]')).to_have_text(before)
     with page.expect_request(lambda req: '/api/classifier-demo' in req.url and req.method=='POST') as second:
         page.get_by_role('button',name='Classify test scenario').click()
@@ -53,8 +55,7 @@ with sync_playwright() as p:
     page.screenshot(path=str(output/'model-demographic-context.png'),full_page=True)
     page.get_by_role('tab',name='Evaluation details').click()
     expect(page.locator('main')).to_contain_text('confusion matrix')
-    page.get_by_role('tab',name='Methodology',exact=True).click()
-    expect(page.locator('main')).to_contain_text('2021')
+    expect(page.get_by_role('tab',name='Methodology',exact=True)).to_have_count(0)
     page.get_by_role('tab',name='Summary',exact=True).click()
     page.get_by_role('button',name='Ask analyst',exact=True).click()
     expect(page.get_by_label('Contextual analyst')).to_be_visible()
@@ -73,7 +74,7 @@ with sync_playwright() as p:
     page.goto(base+'#fairness');page.wait_for_load_state('networkidle')
     page.get_by_label('Minimum group size').select_option('0')
     page.wait_for_load_state('networkidle')
-    expect(page.locator('main')).to_contain_text('Free Form Text Only')
+    expect(page.locator('table td').filter(has_text='Free Form Text Only')).to_have_count(0)
     expect(page.get_by_role('img',name='Historical approval rate, Model-predicted approval rate',exact=True)).to_be_visible()
     expect(page.locator('table td').filter(has_text='Joint')).to_have_count(0)
     groups=page.locator('tbody tr td:first-child').all_text_contents()
@@ -81,7 +82,7 @@ with sync_playwright() as p:
     flags=[g in missing for g in groups]
     assert flags==sorted(flags),groups
     expect(page.locator('.recharts-bar')).to_have_count(2)
-    expect(page.locator('main')).to_contain_text('Joint category is excluded')
+    expect(page.locator('main')).to_contain_text('Joint and Free Form Text Only categories are excluded')
     for route in ['overview','model','fairness','analyst']:
         page.set_viewport_size({'width':390,'height':844})
         page.goto(base+'#'+route);page.wait_for_load_state('networkidle')
