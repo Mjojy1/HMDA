@@ -4,10 +4,10 @@ import { Overview, Fairness } from './pages/Dashboard'
 import { Classifier } from './pages/Classifier'
 import { Analyst } from './pages/Analyst'
 const pages=[
- {id:'overview',name:'Overview',title:'Understand the lending picture',description:'Filter the public sample and explore lending outcomes and loan characteristics.',component:Overview},
- {id:'model',name:'Model classifier',title:'Explore the model classifier',description:'Try fictional test scenarios and review saved model performance.',component:Classifier},
- {id:'fairness',name:'Fairness',title:'Review group outcomes',description:'Explore descriptive differences with the context needed to interpret them.',component:Fairness},
- {id:'analyst',name:'Analyst',title:'Ask the analyst',description:'Explore aggregate evidence with a read-only research assistant.',component:Analyst}
+ {id:'overview',name:'Overview',title:'Understand the Lending Picture',description:'Filter the public sample and explore lending outcomes and loan characteristics.',component:Overview},
+ {id:'model',name:'Model Classifier',title:'Explore the Model Classifier',description:'Try test scenarios and review saved model performance.',component:Classifier},
+ {id:'fairness',name:'Fairness',title:'Review Group Outcomes',description:'Explore descriptive differences with the context needed to interpret them.',component:Fairness},
+ {id:'analyst',name:'Analyst',title:'Ask the Analyst',description:'Explore aggregate evidence with a read-only research assistant.',component:Analyst}
 ]
 export default function App(){
  const [active,setActive]=useState(location.hash.slice(1)||'overview'),[menu,setMenu]=useState(false)

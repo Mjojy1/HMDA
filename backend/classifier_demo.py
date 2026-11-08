@@ -58,4 +58,4 @@ class ClassifierDemo:
         return dict(predicted_class=int(score >= threshold),
                     label='Positive (actions 1 + 2)' if score >= threshold else 'Denied (action 3)',
                     positive_class_score=score, threshold=threshold, target_note=TARGET_NOTE,
-                    disclaimer='Fictional test scenarios only. Not for real-world lending decisions. The uncalibrated model score is not a probability of loan approval.')
+                    disclaimer='Test scenarios only. Not for real-world lending decisions. The uncalibrated model score is not a probability of loan approval.')

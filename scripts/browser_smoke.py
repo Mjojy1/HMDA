@@ -8,7 +8,7 @@ output=Path(os.getenv('HMDA_SCREENSHOT_DIR','outputs/screenshots'));output.mkdir
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True,args=['--no-sandbox'])
     page=browser.new_page(viewport={'width':1440,'height':1000},device_scale_factor=1,reduced_motion='reduce')
-    titles={'analyst':'Ask the analyst','overview':'Understand the lending picture','model':'Explore the model classifier','fairness':'Review group outcomes'}
+    titles={'analyst':'Ask the Analyst','overview':'Understand the Lending Picture','model':'Explore the Model Classifier','fairness':'Review Group Outcomes'}
     errors=[]
     failed_responses=[]
     if os.getenv('HMDA_TEST_DOMINO_AUTH')=='1':
@@ -34,7 +34,7 @@ with sync_playwright() as p:
         print('Rendered',route)
     page.goto(base+'#model');page.wait_for_load_state('networkidle')
     expect(page.get_by_label('Contextual analyst')).to_have_count(0)
-    page.get_by_label('These are fictional inputs for a test demonstration.').check()
+    page.get_by_label('These inputs are for a test demonstration only.').check()
     page.get_by_role('button',name='Classify test scenario').click()
     expect(page.get_by_text('Predicted historical class:',exact=False)).to_be_visible()
     expect(page.locator('main')).to_contain_text('Uncalibrated score')
@@ -95,7 +95,7 @@ with sync_playwright() as p:
         page.screenshot(path=str(output/f'{route}-mobile.png'),full_page=True)
     page.get_by_role('button',name='Open navigation').click()
     page.get_by_role('link',name='Overview',exact=True).click()
-    expect(page.locator('h1')).to_have_text('Understand the lending picture')
+    expect(page.locator('h1')).to_have_text('Understand the Lending Picture')
     if os.getenv('HMDA_TEST_DOMINO_AUTH')!='1':
         # Simulate a prefix-stripping reverse proxy while keeping the browser URL prefixed.
         prefix=base+'preview/demo/'
