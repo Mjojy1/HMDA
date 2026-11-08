@@ -38,6 +38,19 @@ with sync_playwright() as p:
     page.get_by_role('button',name='Classify test scenario').click()
     expect(page.get_by_text('Predicted historical class:',exact=False)).to_be_visible()
     expect(page.locator('main')).to_contain_text('Uncalibrated score')
+    before=page.locator('[role=status]').text_content()
+    with page.expect_request(lambda req: '/api/classifier-demo' in req.url and req.method=='POST') as first:
+        page.get_by_role('button',name='Classify test scenario').click()
+    expect(page.get_by_text('Predicted historical class:',exact=False)).to_be_visible()
+    for dimension in ['Race','Sex','Ethnicity']:
+        page.get_by_label(dimension+' (optional)',exact=True).select_option(index=1)
+    expect(page.locator('[role=status]')).to_have_text(before)
+    with page.expect_request(lambda req: '/api/classifier-demo' in req.url and req.method=='POST') as second:
+        page.get_by_role('button',name='Classify test scenario').click()
+    expect(page.locator('[role=status]')).to_have_text(before)
+    assert first.value.post_data_json==second.value.post_data_json
+    assert set(second.value.post_data_json)=={'fictional_scenario','loan_amount','income','combined_loan_to_value_ratio','debt_to_income_ratio','loan_type','loan_term'}
+    page.screenshot(path=str(output/'model-demographic-context.png'),full_page=True)
     page.get_by_role('tab',name='Evaluation details').click()
     expect(page.locator('main')).to_contain_text('confusion matrix')
     page.get_by_role('tab',name='Methodology',exact=True).click()
